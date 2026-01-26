@@ -598,7 +598,7 @@
             return `${filename || "unknown"}::${intrinsicKey}`;
         }
 
-        async function loadPLYFromData(arrayBuffer, filename, extrinsics, intrinsics) {
+        async function loadPLYFromData(arrayBuffer, filename, extrinsics, intrinsics, manualCamera) {
             try {
                 const meshSignature = buildMeshSignature(filename, intrinsics);
                 const isNewMesh = meshSignature !== lastMeshSignature;
@@ -756,13 +756,13 @@
                     }
                 }
 
-                // Set camera from extrinsics and intrinsics if provided
-                // Only set camera on first load (when initialCameraData doesn't exist)
-                // This preserves user's manual camera adjustments between workflow executions
-                if ((extrinsics || intrinsics) && !initialCameraData) {
+                // Set camera from manual_camera, extrinsics or intrinsics
+                if (manualCamera) {
+                    applyManualCamera(manualCamera);
+                } else if ((extrinsics || intrinsics) && !initialCameraData) {
                     setCameraFromExtrinsics(extrinsics, intrinsics, currentSplat);
                     if (controls) controls.update();
-                } else if (!intrinsics && !extrinsics && !initialCameraData) {
+                } else if (!intrinsics && !extrinsics && !initialCameraData && !manualCamera) {
                     camera.data.fx = DEFAULT_FOCAL_LENGTH;
                     camera.data.fy = DEFAULT_FOCAL_LENGTH;
                     baseFocalLength = camera.data.fx;
@@ -907,7 +907,7 @@
             updateCropFrame();
         }
 
-        async function renderForRequest(requestId, resolution, aspectRatio) {
+        async function renderForRequest(requestId, resolution, aspectRatio, manualCamera) {
             if (!renderer || !renderer.canvas) {
                 window.parent.postMessage({
                     type: 'RENDER_ERROR',
@@ -921,6 +921,9 @@
 
             try {
                 updateOutputSettings(resolution, aspectRatio);
+                if (manualCamera) {
+                    applyManualCamera(manualCamera);
+                }
 
                 if (animationId) cancelAnimationFrame(animationId);
 
@@ -1092,6 +1095,38 @@
                 return controls.getCameraTarget();
             }
             return lastCameraTarget || controls.target || controls._target || controls.cameraTarget || null;
+        }
+
+        function applyManualCamera(manualCamera) {
+            if (!camera || !controls || !manualCamera) return;
+
+            console.log('[GaussianViewer] Applying manual camera:', manualCamera);
+
+            const x = parseFloat(manualCamera.x) || 0;
+            const y = parseFloat(manualCamera.y) || 0;
+            const z = parseFloat(manualCamera.z) || 0;
+            const pitch = (parseFloat(manualCamera.pitch) || 0) * Math.PI / 180;
+            const yaw = (parseFloat(manualCamera.yaw) || 0) * Math.PI / 180;
+            const roll = (parseFloat(manualCamera.roll) || 0) * Math.PI / 180;
+
+            camera.position.x = x;
+            camera.position.y = y;
+            camera.position.z = z;
+
+            // Calculate target based on pitch and yaw
+            // Assume 0,0,0 means looking at +Z
+            const dirX = Math.sin(yaw) * Math.cos(pitch);
+            const dirY = -Math.sin(pitch);
+            const dirZ = Math.cos(yaw) * Math.cos(pitch);
+
+            const target = new SPLAT.Vector3(x + dirX, y + dirY, z + dirZ);
+            controls.setCameraTarget(target);
+
+            // Note: OrbitControls typically keeps the camera upright,
+            // so roll might not be fully supported without custom adjustment
+
+            controls.update();
+            scheduleFrameLayoutUpdate();
         }
 
         function applyCameraState(cameraState) {
@@ -1390,25 +1425,32 @@
 
         // Listen for messages from parent
         window.addEventListener('message', async (event) => {
-            const { type, data, filename, extrinsics, intrinsics } = event.data;
+            const { type, data, filename, extrinsics, intrinsics, manual_camera } = event.data;
 
             if (type === 'LOAD_MESH_DATA' && data) {
                 console.log('[GaussianViewer] Received LOAD_MESH_DATA, size:', data.byteLength);
                 console.log('[GaussianViewer] Extrinsics:', extrinsics);
                 console.log('[GaussianViewer] Intrinsics:', intrinsics);
-                await loadPLYFromData(data, filename || 'gaussian.ply', extrinsics, intrinsics);
+                console.log('[GaussianViewer] Manual Camera:', manual_camera);
+                await loadPLYFromData(data, filename || 'gaussian.ply', extrinsics, intrinsics, manual_camera);
                 applyFocalScale(focalScaleInput.value);
                 scheduleFrameLayoutUpdate();
             } else if (type === 'LOAD_MESH_DATA' && !data) {
                 console.warn('[GaussianViewer] LOAD_MESH_DATA missing data buffer');
-            } else if (type === 'APPLY_CAMERA_STATE' && event.data?.camera_state) {
-                applyCameraState(event.data.camera_state);
+            } else if (type === 'APPLY_CAMERA_STATE' && (event.data?.camera_state || event.data?.manual_camera)) {
+                if (event.data.manual_camera) {
+                    applyManualCamera(event.data.manual_camera);
+                }
+                if (event.data.camera_state) {
+                    applyCameraState(event.data.camera_state);
+                }
             } else if (type === 'RENDER_REQUEST' && event.data?.request_id) {
                 const requestId = event.data.request_id;
                 const resolution = event.data.output_resolution;
                 const aspectRatio = event.data.output_aspect_ratio;
-                console.log('[GaussianViewer] RENDER_REQUEST:', requestId, resolution, aspectRatio);
-                renderForRequest(requestId, resolution, aspectRatio);
+                const manualCamera = event.data.manual_camera;
+                console.log('[GaussianViewer] RENDER_REQUEST:', requestId, resolution, aspectRatio, manualCamera);
+                renderForRequest(requestId, resolution, aspectRatio, manualCamera);
             } else if (type === 'OUTPUT_SETTINGS') {
                 const resolution = event.data?.output_resolution;
                 const aspectRatio = event.data?.output_aspect_ratio;

@@ -63,6 +63,12 @@ class RenderGaussianNode:
                 "intrinsics": ("INTRINSICS", {
                     "tooltip": "3x3 camera intrinsics matrix (from Preview node or custom)"
                 }),
+                "manual_camera": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "placeholder": '{"x":0,"y":0,"z":0,"pitch":0,"yaw":0,"roll":0}',
+                    "tooltip": "Set camera position manually using a JSON string"
+                }),
             },
         }
 
@@ -72,7 +78,7 @@ class RenderGaussianNode:
     CATEGORY = "geompack/visualization"
 
     @classmethod
-    def IS_CHANGED(cls, ply_path: str, extrinsics=None, intrinsics=None):
+    def IS_CHANGED(cls, ply_path: str, extrinsics=None, intrinsics=None, manual_camera=""):
         """
         Force re-execution when camera state changes (cached via Preview node).
         """
@@ -84,12 +90,13 @@ class RenderGaussianNode:
             "camera_version": camera_version,
             "extrinsics": extrinsics,
             "intrinsics": intrinsics,
+            "manual_camera": manual_camera,
         }
         data = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
         print(f"[RenderGaussian] IS_CHANGED: camera_version={camera_version}, camera_state={'yes' if camera_state else 'no'}")
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
-    def render_gaussian(self, ply_path: str, extrinsics=None, intrinsics=None):
+    def render_gaussian(self, ply_path: str, extrinsics=None, intrinsics=None, manual_camera=""):
         """
         Execute rendering and return image tensor.
         """
@@ -104,6 +111,7 @@ class RenderGaussianNode:
         print(f"  ply_path: {ply_path}")
         print(f"  extrinsics: {extrinsics is not None}")
         print(f"  intrinsics: {intrinsics is not None}")
+        print(f"  manual_camera: {manual_camera}")
         
         if not ply_path:
             print("[RenderGaussian] ERROR: No PLY path provided")
@@ -170,6 +178,13 @@ class RenderGaussianNode:
         if intrinsics is not None:
             ui_data["intrinsics"] = [intrinsics]
             print(f"[RenderGaussian] Intrinsics shape: {len(intrinsics)}x{len(intrinsics[0])}")
+        if manual_camera:
+            try:
+                manual_camera_dict = json.loads(manual_camera)
+                ui_data["manual_camera"] = [manual_camera_dict]
+                print(f"[RenderGaussian] Manual camera provided: {manual_camera_dict}")
+            except Exception as e:
+                print(f"[RenderGaussian] Error parsing manual_camera: {e}")
         if camera_state is not None:
             ui_data["camera_state"] = [camera_state]
 
@@ -337,6 +352,7 @@ class RenderGaussianNode:
             "output_aspect_ratio": ui_data.get("output_aspect_ratio", [None])[0],
             "extrinsics": ui_data.get("extrinsics", [None])[0],
             "intrinsics": ui_data.get("intrinsics", [None])[0],
+            "manual_camera": ui_data.get("manual_camera", [None])[0],
             "camera_state": ui_data.get("camera_state", [None])[0],
         }
 

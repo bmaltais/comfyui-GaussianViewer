@@ -33,6 +33,12 @@ class GaussianViewerNode(RenderGaussianNode):
                 "intrinsics": ("INTRINSICS", {
                     "tooltip": "3x3 camera intrinsics matrix for FOV"
                 }),
+                "manual_camera": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "placeholder": '{"x":0,"y":0,"z":0,"pitch":0,"yaw":0,"roll":0}',
+                    "tooltip": "Set camera position manually using a JSON string"
+                }),
             },
         }
 
@@ -42,7 +48,7 @@ class GaussianViewerNode(RenderGaussianNode):
     FUNCTION = "gaussian_viewer"
     CATEGORY = "geompack/visualization"
 
-    def gaussian_viewer(self, ply_path: str, extrinsics=None, intrinsics=None):
+    def gaussian_viewer(self, ply_path: str, extrinsics=None, intrinsics=None, manual_camera=""):
         """
         Preview the PLY in the viewer and return the rendered IMAGE output.
         """
@@ -53,6 +59,7 @@ class GaussianViewerNode(RenderGaussianNode):
         print(f"  ply_path: {ply_path}")
         print(f"  extrinsics: {extrinsics is not None}")
         print(f"  intrinsics: {intrinsics is not None}")
+        print(f"  manual_camera: {manual_camera}")
 
         if not ply_path:
             print("[GaussianViewer] ERROR: No PLY path provided")
@@ -92,11 +99,20 @@ class GaussianViewerNode(RenderGaussianNode):
             ui_data["intrinsics"] = [intrinsics]
             print(f"[GaussianViewer] Intrinsics provided: {len(intrinsics)}x{len(intrinsics[0])}")
 
+        if manual_camera:
+            try:
+                import json
+                manual_camera_dict = json.loads(manual_camera)
+                ui_data["manual_camera"] = [manual_camera_dict]
+                print(f"[GaussianViewer] Manual camera provided: {manual_camera_dict}")
+            except Exception as e:
+                print(f"[GaussianViewer] Error parsing manual_camera: {e}")
+
         print(f"[GaussianViewer] UI data keys: {list(ui_data.keys())}")
         print("[GaussianViewer] ===== VIEWER PREVIEW READY =====")
         print("=" * 80)
 
-        image_tuple = super().render_gaussian(ply_path, extrinsics, intrinsics)
+        image_tuple = super().render_gaussian(ply_path, extrinsics, intrinsics, manual_camera=manual_camera)
         return {"ui": ui_data, "result": image_tuple}
 
 

@@ -127,6 +127,7 @@ app.registerExtension({
                         const requestId = message.request_id;
                         const resolution = message.output_resolution || 2048;
                         const aspectRatio = message.output_aspect_ratio || "source";
+                        const manualCamera = message.manual_camera || null;
 
                         iframe.contentWindow.postMessage({
                             type: "OUTPUT_SETTINGS",
@@ -138,7 +139,8 @@ app.registerExtension({
                             type: "RENDER_REQUEST",
                             request_id: requestId,
                             output_resolution: resolution,
-                            output_aspect_ratio: aspectRatio
+                            output_aspect_ratio: aspectRatio,
+                            manual_camera: manualCamera
                         }, "*");
 
                         console.log("[GeomPack Gaussian v2] Forwarded render request to preview iframe:", requestId);
@@ -327,6 +329,7 @@ app.registerExtension({
                         // Extract camera parameters if provided
                         const extrinsics = uiData.extrinsics?.[0] || null;
                         const intrinsics = uiData.intrinsics?.[0] || null;
+                        const manualCamera = uiData.manual_camera?.[0] || null;
 
                         // Resize node to match image aspect ratio from intrinsics
                         if (intrinsics && intrinsics[0] && intrinsics[1]) {
@@ -359,7 +362,8 @@ app.registerExtension({
                             const info = meshInfo || {
                                 filename,
                                 extrinsics,
-                                intrinsics
+                                intrinsics,
+                                manualCamera
                             };
                             if (!iframe.contentWindow) {
                                 console.error("[GeomPack Gaussian v2] Iframe contentWindow not available");
@@ -388,6 +392,7 @@ app.registerExtension({
                                     filename: targetFilename,
                                     extrinsics: targetExtrinsics,
                                     intrinsics: targetIntrinsics,
+                                    manual_camera: info.manualCamera || manualCamera,
                                     timestamp: Date.now()
                                 }, "*", [arrayBuffer]);
                             } catch (error) {
@@ -398,7 +403,7 @@ app.registerExtension({
                         this.fetchAndSend = fetchAndSend;
 
                         // Fetch and send when iframe is ready
-                        const meshInfo = { filename, extrinsics, intrinsics };
+                        const meshInfo = { filename, extrinsics, intrinsics, manualCamera };
                         this.pendingMeshInfo = meshInfo;
                         if (iframeLoaded) {
                             fetchAndSend(meshInfo);
