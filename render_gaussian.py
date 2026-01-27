@@ -482,6 +482,7 @@ try:
         print(f"[RenderGaussian] Parsed parameters:")
         print(f"[RenderGaussian]   - ply_file: {ply_file}")
         print(f"[RenderGaussian]   - filename: {filename}")
+        print(f"[RenderGaussian]   - Coordinate System: X-Right, Y-Up, Z-Forward")
         print(f"[RenderGaussian]   - camera_state present: {camera_state is not None}")
 
         if not camera_state:

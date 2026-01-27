@@ -393,7 +393,7 @@
         }
 
         // Set camera from extrinsics and intrinsics
-        // extrinsics: 4x4 matrix (identity for SHARP = camera at origin looking down +Z)
+        // extrinsics: 4x4 matrix (World-to-Camera [R|t])
         // intrinsics: 3x3 matrix [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
         // splat: the loaded Gaussian splat object (optional, used for bounds)
         function setCameraFromExtrinsics(extrinsics, intrinsics, splat) {
@@ -403,13 +403,13 @@
             console.log('[GaussianViewer] Extrinsics:', JSON.stringify(extrinsics));
             console.log('[GaussianViewer] Intrinsics:', JSON.stringify(intrinsics));
 
-            // Parse extrinsics to get camera position
-            // For a 4x4 extrinsics matrix [R|t], camera position in world space is -R^T * t
-            // But for identity matrix, camera is simply at origin
+            // Parse extrinsics to get camera position and orientation
+            // For a 4x4 extrinsics matrix M = [R|t], camera-to-world is M^-1 = [R^T | -R^T * t]
             let camPosX = 0, camPosY = 0, camPosZ = 0;
+            let forward = new SPLAT.Vector3(0, 0, 1);
+            let up = new SPLAT.Vector3(0, 1, 0);
 
             if (extrinsics && Array.isArray(extrinsics) && extrinsics.length === 4) {
-                // Extract rotation and translation from 4x4 extrinsics
                 const R = [
                     [extrinsics[0][0], extrinsics[0][1], extrinsics[0][2]],
                     [extrinsics[1][0], extrinsics[1][1], extrinsics[1][2]],
@@ -422,7 +422,14 @@
                 camPosY = -(R[0][1] * t[0] + R[1][1] * t[1] + R[2][1] * t[2]);
                 camPosZ = -(R[0][2] * t[0] + R[1][2] * t[1] + R[2][2] * t[2]);
 
+                // Forward vector (Camera +Z) in world = 3rd column of R^T = 3rd row of R
+                forward = new SPLAT.Vector3(R[2][0], R[2][1], R[2][2]);
+                // Up vector (Camera +Y) in world = 2nd column of R^T = 2nd row of R
+                up = new SPLAT.Vector3(R[1][0], R[1][1], R[1][2]);
+
                 console.log('[GaussianViewer] Computed camera position from extrinsics:', camPosX, camPosY, camPosZ);
+                console.log('[GaussianViewer] Computed forward vector:', forward.x, forward.y, forward.z);
+                console.log('[GaussianViewer] Computed up vector:', up.x, up.y, up.z);
             }
 
             // Calculate FOV and set camera focal length from intrinsics
@@ -556,35 +563,33 @@
                 lastSceneSize = size;
             }
 
-            // SHARP uses Y-down coordinate system, so flip camera Y as well
-            camPosY = -camPosY;
-
-            // For SHARP: camera is at origin, scene is at positive Z
+            // For identity extrinsics, camera is at origin looking at +Z
             // The orbit controls work by having the camera orbit around a target point.
-            // To get the "original image view", we set camera at the computed position
-            // and look at the scene center.
-
             const camPos = new SPLAT.Vector3(camPosX, camPosY, camPosZ);
-            // Use orbitZ for the target - closer to camera for better orbit feel
-            const targetPos = new SPLAT.Vector3(targetX, targetY, orbitZ);
+
+            // Calculate target position based on forward vector
+            const targetPos = new SPLAT.Vector3(
+                camPosX + forward.x * targetZ,
+                camPosY + forward.y * targetZ,
+                camPosZ + forward.z * targetZ
+            );
+
+            // Set camera position and up vector
+            camera.position.x = camPosX;
+            camera.position.y = camPosY;
+            camera.position.z = camPosZ;
+            camera.up = up;
 
             // Store for reset
             initialCameraData = {
                 position: camPos,
                 target: targetPos,
+                up: up,
                 fx: camera.data.fx,
                 fy: camera.data.fy
             };
 
-            // Set camera position - IMPORTANT: must set camera.position, not camera.data.position
-            // camera.position is used by OrbitControls
-            // camera.data.position is used for rendering
-            camera.position.x = camPosX;
-            camera.position.y = camPosY;
-            camera.position.z = camPosZ;
-
-            // Update orbit controls to orbit around the target point
-            // This recalculates the internal orbit state from current camera.position
+            // Update orbit controls
             controls.setCameraTarget(targetPos);
 
             console.log('[GaussianViewer] Camera set to position:', camPosX, camPosY, camPosZ);
@@ -803,6 +808,9 @@
                     camera.position.x = pos.x;
                     camera.position.y = pos.y;
                     camera.position.z = pos.z;
+                    if (initialCameraData.up) {
+                        camera.up = initialCameraData.up;
+                    }
 
                     // Restore focal lengths
                     if (initialCameraData.fx) {
@@ -822,6 +830,7 @@
                     console.log('[GaussianViewer] Reset camera to position:', pos.x, pos.y, pos.z);
                     console.log('[GaussianViewer] Reset camera target:', initialCameraData.target?.x, initialCameraData.target?.y, initialCameraData.target?.z);
                 } else {
+                    camera.up = new SPLAT.Vector3(0, 1, 0);
                     // Default fallback
                     camera.position.x = 0;
                     camera.position.y = 0;
@@ -1105,25 +1114,30 @@
             const x = parseFloat(manualCamera.x) || 0;
             const y = parseFloat(manualCamera.y) || 0;
             const z = parseFloat(manualCamera.z) || 0;
-            const pitch = (parseFloat(manualCamera.pitch) || 0) * Math.PI / 180;
+            const p = (parseFloat(manualCamera.pitch) || 0) * Math.PI / 180;
             const yaw = (parseFloat(manualCamera.yaw) || 0) * Math.PI / 180;
-            const roll = (parseFloat(manualCamera.roll) || 0) * Math.PI / 180;
+            const r = (parseFloat(manualCamera.roll) || 0) * Math.PI / 180;
 
             camera.position.x = x;
             camera.position.y = y;
             camera.position.z = z;
 
-            // Calculate target based on pitch and yaw
-            // Assume 0,0,0 means looking at +Z
-            const dirX = Math.sin(yaw) * Math.cos(pitch);
-            const dirY = -Math.sin(pitch);
-            const dirZ = Math.cos(yaw) * Math.cos(pitch);
+            // Calculate Forward and Up vectors using Yaw-Pitch-Roll convention
+            // Order: Yaw (about Y), Pitch (about local X), Roll (about local Z)
 
-            const target = new SPLAT.Vector3(x + dirX, y + dirY, z + dirZ);
+            // Forward (Camera +Z)
+            const fx = Math.sin(yaw) * Math.cos(p);
+            const fy = -Math.sin(p);
+            const fz = Math.cos(yaw) * Math.cos(p);
+
+            // Up (Camera +Y)
+            const ux = -Math.cos(yaw) * Math.sin(r) + Math.sin(yaw) * Math.sin(p) * Math.cos(r);
+            const uy = Math.cos(p) * Math.cos(r);
+            const uz = Math.sin(yaw) * Math.sin(r) + Math.cos(yaw) * Math.sin(p) * Math.cos(r);
+
+            camera.up = new SPLAT.Vector3(ux, uy, uz);
+            const target = new SPLAT.Vector3(x + fx, y + fy, z + fz);
             controls.setCameraTarget(target);
-
-            // Note: OrbitControls typically keeps the camera upright,
-            // so roll might not be fully supported without custom adjustment
 
             controls.update();
             scheduleFrameLayoutUpdate();
@@ -1189,6 +1203,7 @@
             console.log(`  - Position: x=${camera.position.x}, y=${camera.position.y}, z=${camera.position.z}`);
             console.log(`  - Target: ${target ? `x=${target.x}, y=${target.y}, z=${target.z}` : 'null'}`);
 
+            // Extract Euler angles (Yaw-Pitch-Roll) from camera orientation
             let pitch = 0, yaw = 0, roll = 0;
             if (target) {
                 const dx = target.x - camera.position.x;
@@ -1197,8 +1212,24 @@
                 const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
                 if (dist > 0) {
-                    pitch = -Math.asin(dy / dist) * 180 / Math.PI;
-                    yaw = Math.atan2(dx, dz) * 180 / Math.PI;
+                    const fx = dx / dist;
+                    const fy = dy / dist;
+                    const fz = dz / dist;
+
+                    pitch = -Math.asin(fy) * 180 / Math.PI;
+                    yaw = Math.atan2(fx, fz) * 180 / Math.PI;
+
+                    // To extract roll, we look at the camera's Right and Up vectors
+                    const camUp = camera.up || new SPLAT.Vector3(0, 1, 0);
+                    // Right = Up x Forward
+                    const rx = camUp.y * fz - camUp.z * fy;
+                    const ry = camUp.z * fx - camUp.x * fz;
+                    const rz = camUp.x * fy - camUp.y * fx;
+
+                    const cosP = Math.cos(pitch * Math.PI / 180);
+                    if (Math.abs(cosP) > 1e-4) {
+                        roll = Math.atan2(ry / cosP, camUp.y / cosP) * 180 / Math.PI;
+                    }
                 }
             }
             console.log(`  - Orientation: pitch=${pitch.toFixed(4)}, yaw=${yaw.toFixed(4)}, roll=${roll.toFixed(4)}`);
@@ -1216,6 +1247,7 @@
                     z: camera.position.z
                 },
                 target: target ? { x: target.x, y: target.y, z: target.z } : null,
+                up: camera.up ? { x: camera.up.x, y: camera.up.y, z: camera.up.z } : null,
                 pitch: pitch,
                 yaw: yaw,
                 roll: roll,
