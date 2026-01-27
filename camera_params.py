@@ -37,7 +37,6 @@ def set_camera_state(key, camera_state):
         print("=" * 80)
         print(f"[CameraParams] Setting camera state for key: '{key}'")
         print(f"[CameraParams] Camera state keys: {list(camera_state.keys())}")
-        print(f"[CameraParams] Coordinate System: X-Right, Y-Up, Z-Forward")
         print(f"[CameraParams] Camera state details:")
         if 'position' in camera_state:
             pos = camera_state['position']
