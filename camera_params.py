@@ -8,6 +8,8 @@ This module provides a global cache for camera parameters that persists
 across Python module reloads and is shared between Preview and Render nodes.
 """
 
+import json
+
 # Global camera parameters cache
 # Key: PLY filename or path
 # Value: Camera state dict with position, target, fx, fy, etc.
@@ -45,6 +47,8 @@ def set_camera_state(key, camera_state):
                 print(f"  - Target: x={tgt.get('x')}, y={tgt.get('y')}, z={tgt.get('z')}")
             else:
                 print(f"  - Target: {tgt}")
+        if all(k in camera_state for k in ('pitch', 'yaw', 'roll')):
+            print(f"  - Orientation: pitch={camera_state['pitch']:.4f}, yaw={camera_state['yaw']:.4f}, roll={camera_state['roll']:.4f}")
         if 'fx' in camera_state or 'fy' in camera_state:
             print(f"  - Focal length: fx={camera_state.get('fx')}, fy={camera_state.get('fy')}")
         if 'image_width' in camera_state or 'image_height' in camera_state:
@@ -58,6 +62,19 @@ def set_camera_state(key, camera_state):
         CAMERA_PARAMS_BY_KEY[key] = camera_state
         CAMERA_STATE_VERSION += 1
         
+        # Output copy-pasteable JSON for manual_camera
+        if 'position' in camera_state and 'pitch' in camera_state:
+            pos = camera_state['position']
+            manual_cam = {
+                "x": round(pos.get('x', 0), 6),
+                "y": round(pos.get('y', 0), 6),
+                "z": round(pos.get('z', 0), 6),
+                "pitch": round(camera_state.get('pitch', 0), 6),
+                "yaw": round(camera_state.get('yaw', 0), 6),
+                "roll": round(camera_state.get('roll', 0), 6)
+            }
+            print(f"[CameraParams] Manual Camera JSON: {json.dumps(manual_cam)}")
+
         print(f"[CameraParams] Camera state saved successfully")
         print(f"[CameraParams] Version updated: {old_version} -> {CAMERA_STATE_VERSION}")
         print(f"[CameraParams] Total cached states: {len(CAMERA_PARAMS_BY_KEY)}")

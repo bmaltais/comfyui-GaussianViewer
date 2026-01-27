@@ -1188,6 +1188,21 @@
             console.log('[GaussianViewer] Current camera state:');
             console.log(`  - Position: x=${camera.position.x}, y=${camera.position.y}, z=${camera.position.z}`);
             console.log(`  - Target: ${target ? `x=${target.x}, y=${target.y}, z=${target.z}` : 'null'}`);
+
+            let pitch = 0, yaw = 0, roll = 0;
+            if (target) {
+                const dx = target.x - camera.position.x;
+                const dy = target.y - camera.position.y;
+                const dz = target.z - camera.position.z;
+                const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+                if (dist > 0) {
+                    pitch = -Math.asin(dy / dist) * 180 / Math.PI;
+                    yaw = Math.atan2(dx, dz) * 180 / Math.PI;
+                }
+            }
+            console.log(`  - Orientation: pitch=${pitch.toFixed(4)}, yaw=${yaw.toFixed(4)}, roll=${roll.toFixed(4)}`);
+
             console.log(`  - Focal length: fx=${camera.data?.fx}, fy=${camera.data?.fy}`);
             console.log(`  - Canvas size: ${canvas?.width}x${canvas?.height}`);
             console.log(`  - Image size used: ${imageWidth}x${imageHeight}`);
@@ -1201,6 +1216,9 @@
                     z: camera.position.z
                 },
                 target: target ? { x: target.x, y: target.y, z: target.z } : null,
+                pitch: pitch,
+                yaw: yaw,
+                roll: roll,
                 fx: camera.data?.fx || null,
                 fy: camera.data?.fy || null,
                 image_width: imageWidth,

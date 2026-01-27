@@ -499,6 +499,8 @@ try:
                 print(f"[RenderGaussian]   - Target: x={tgt.get('x')}, y={tgt.get('y')}, z={tgt.get('z')}")
             else:
                 print(f"[RenderGaussian]   - Target: {tgt}")
+        if all(k in camera_state for k in ('pitch', 'yaw', 'roll')):
+            print(f"[RenderGaussian]   - Orientation: pitch={camera_state['pitch']:.4f}, yaw={camera_state['yaw']:.4f}, roll={camera_state['roll']:.4f}")
         if 'fx' in camera_state or 'fy' in camera_state:
             print(f"[RenderGaussian]   - Focal length: fx={camera_state.get('fx')}, fy={camera_state.get('fy')}")
         if 'image_width' in camera_state or 'image_height' in camera_state:
