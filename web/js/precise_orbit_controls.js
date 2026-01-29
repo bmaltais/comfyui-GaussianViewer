@@ -17,10 +17,15 @@ export class PreciseOrbitControls {
         this.dampening = 0.12;
         this.roll = 0;
 
-        let _radius = radius;
-        let _target = target ? target.clone() : new SPLAT.Vector3();
-        let _alpha = alpha;
-        let _beta = beta;
+        let goalRadius = radius;
+        let goalTarget = target ? target.clone() : new SPLAT.Vector3();
+        let goalAlpha = alpha;
+        let goalBeta = beta;
+
+        let currentRadius = goalRadius;
+        let currentTarget = goalTarget.clone();
+        let currentAlpha = goalAlpha;
+        let currentBeta = goalBeta;
 
         let isDragging = false;
         let isPanning = false;
@@ -33,12 +38,12 @@ export class PreciseOrbitControls {
 
         const onObjectChanged = () => {
             const euler = this.camera.rotation.toEuler();
-            _alpha = -euler.y;
-            _beta = -euler.x;
-            const x = this.camera.position.x - _radius * Math.sin(_alpha) * Math.cos(_beta);
-            const y = this.camera.position.y + _radius * Math.sin(_beta);
-            const z = this.camera.position.z + _radius * Math.cos(_alpha) * Math.cos(_beta);
-            _target = new SPLAT.Vector3(x, y, z);
+            goalAlpha = -euler.y;
+            goalBeta = -euler.x;
+            const x = this.camera.position.x - goalRadius * Math.sin(goalAlpha) * Math.cos(goalBeta);
+            const y = this.camera.position.y + goalRadius * Math.sin(goalBeta);
+            const z = this.camera.position.z + goalRadius * Math.cos(goalAlpha) * Math.cos(goalBeta);
+            goalTarget = new SPLAT.Vector3(x, y, z);
         };
 
         this.camera.addEventListener("objectChanged", onObjectChanged);
@@ -47,13 +52,13 @@ export class PreciseOrbitControls {
             const dx = t.x - this.camera.position.x;
             const dy = t.y - this.camera.position.y;
             const dz = t.z - this.camera.position.z;
-            _radius = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            _beta = Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
-            _alpha = -Math.atan2(dx, dz);
-            _target = new SPLAT.Vector3(t.x, t.y, t.z);
+            goalRadius = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            goalBeta = Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
+            goalAlpha = -Math.atan2(dx, dz);
+            goalTarget = new SPLAT.Vector3(t.x, t.y, t.z);
         };
 
-        const getZoomScale = () => 0.1 + 0.9 * (_radius - this.minZoom) / (this.maxZoom - this.minZoom);
+        const getZoomScale = () => 0.1 + 0.9 * (goalRadius - this.minZoom) / (this.maxZoom - this.minZoom);
 
         const onKeyDown = (e) => {
             keys[e.code] = true;
@@ -104,12 +109,12 @@ export class PreciseOrbitControls {
                 const rotationMatrix = SPLAT.Matrix3.RotationFromQuaternion(this.camera.rotation).buffer;
                 const right = new SPLAT.Vector3(rotationMatrix[0], rotationMatrix[3], rotationMatrix[6]);
                 const up = new SPLAT.Vector3(rotationMatrix[1], rotationMatrix[4], rotationMatrix[7]);
-                _target = _target.add(right.multiply(panX));
-                _target = _target.add(up.multiply(panY));
+                goalTarget = goalTarget.add(right.multiply(panX));
+                goalTarget = goalTarget.add(up.multiply(panY));
             } else {
-                _alpha -= dx * this.orbitSpeed * 0.003 * shiftMult;
-                _beta += dy * this.orbitSpeed * 0.003 * shiftMult;
-                _beta = Math.min(Math.max(_beta, this.minAngle * Math.PI / 180), this.maxAngle * Math.PI / 180);
+                goalAlpha -= dx * this.orbitSpeed * 0.003 * shiftMult;
+                goalBeta += dy * this.orbitSpeed * 0.003 * shiftMult;
+                goalBeta = Math.min(Math.max(goalBeta, this.minAngle * Math.PI / 180), this.maxAngle * Math.PI / 180);
             }
             lastMouseX = e.clientX;
             lastMouseY = e.clientY;
@@ -119,8 +124,8 @@ export class PreciseOrbitControls {
             preventDefaults(e);
             const zoomScale = getZoomScale();
             const shiftMult = isShiftPressed ? 0.1 : 1.0;
-            _radius += e.deltaY * this.zoomSpeed * 0.025 * zoomScale * shiftMult;
-            _radius = Math.min(Math.max(_radius, this.minZoom), this.maxZoom);
+            goalRadius += e.deltaY * this.zoomSpeed * 0.025 * zoomScale * shiftMult;
+            goalRadius = Math.min(Math.max(goalRadius, this.minZoom), this.maxZoom);
         };
 
         const onTouchStart = (e) => {
@@ -158,8 +163,8 @@ export class PreciseOrbitControls {
                 const distance = Math.sqrt(dx * dx + dy * dy);
                 const deltaDistance = touchDistance - distance;
                 const shiftMult = isShiftPressed ? 0.1 : 1.0;
-                _radius += deltaDistance * this.zoomSpeed * 0.1 * zoomScale * shiftMult;
-                _radius = Math.min(Math.max(_radius, this.minZoom), this.maxZoom);
+                goalRadius += deltaDistance * this.zoomSpeed * 0.1 * zoomScale * shiftMult;
+                goalRadius = Math.min(Math.max(goalRadius, this.minZoom), this.maxZoom);
                 touchDistance = distance;
 
                 const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
@@ -169,17 +174,17 @@ export class PreciseOrbitControls {
                 const rotationMatrix = SPLAT.Matrix3.RotationFromQuaternion(this.camera.rotation).buffer;
                 const right = new SPLAT.Vector3(rotationMatrix[0], rotationMatrix[3], rotationMatrix[6]);
                 const up = new SPLAT.Vector3(rotationMatrix[1], rotationMatrix[4], rotationMatrix[7]);
-                _target = _target.add(right.multiply(-dMidX * this.panSpeed * 0.025 * zoomScale * shiftMult));
-                _target = _target.add(up.multiply(-dMidY * this.panSpeed * 0.025 * zoomScale * shiftMult));
+                goalTarget = goalTarget.add(right.multiply(-dMidX * this.panSpeed * 0.025 * zoomScale * shiftMult));
+                goalTarget = goalTarget.add(up.multiply(-dMidY * this.panSpeed * 0.025 * zoomScale * shiftMult));
                 lastMouseX = midX;
                 lastMouseY = midY;
             } else if (!isPanning && e.touches.length === 1) {
                 const dx = e.touches[0].clientX - lastMouseX;
                 const dy = e.touches[0].clientY - lastMouseY;
                 const shiftMult = isShiftPressed ? 0.1 : 1.0;
-                _alpha -= dx * this.orbitSpeed * 0.003 * shiftMult;
-                _beta += dy * this.orbitSpeed * 0.003 * shiftMult;
-                _beta = Math.min(Math.max(_beta, this.minAngle * Math.PI / 180), this.maxAngle * Math.PI / 180);
+                goalAlpha -= dx * this.orbitSpeed * 0.003 * shiftMult;
+                goalBeta += dy * this.orbitSpeed * 0.003 * shiftMult;
+                goalBeta = Math.min(Math.max(goalBeta, this.minAngle * Math.PI / 180), this.maxAngle * Math.PI / 180);
                 lastMouseX = e.touches[0].clientX;
                 lastMouseY = e.touches[0].clientY;
             }
@@ -188,17 +193,17 @@ export class PreciseOrbitControls {
         const lerp = (a, b, t) => (1 - t) * a + t * b;
 
         this.update = () => {
-            alpha = lerp(alpha, _alpha, this.dampening);
-            beta = lerp(beta, _beta, this.dampening);
-            radius = lerp(radius, _radius, this.dampening);
-            target = target.lerp(_target, this.dampening);
+            currentAlpha = lerp(currentAlpha, goalAlpha, this.dampening);
+            currentBeta = lerp(currentBeta, goalBeta, this.dampening);
+            currentRadius = lerp(currentRadius, goalRadius, this.dampening);
+            currentTarget = currentTarget.lerp(goalTarget, this.dampening);
 
-            const x = target.x + radius * Math.sin(alpha) * Math.cos(beta);
-            const y = target.y - radius * Math.sin(beta);
-            const z = target.z - radius * Math.cos(alpha) * Math.cos(beta);
+            const x = currentTarget.x + currentRadius * Math.sin(currentAlpha) * Math.cos(currentBeta);
+            const y = currentTarget.y - currentRadius * Math.sin(currentBeta);
+            const z = currentTarget.z - currentRadius * Math.cos(currentAlpha) * Math.cos(currentBeta);
             this.camera.position = new SPLAT.Vector3(x, y, z);
 
-            const dir = target.subtract(this.camera.position).normalize();
+            const dir = currentTarget.subtract(this.camera.position).normalize();
             const pitch = Math.asin(-dir.y);
             const yaw = Math.atan2(dir.x, dir.z);
             this.camera.rotation = SPLAT.Quaternion.FromEuler(new SPLAT.Vector3(pitch, yaw, this.roll));
@@ -210,14 +215,14 @@ export class PreciseOrbitControls {
             const forward = new SPLAT.Vector3(-rotationMatrix[2], -rotationMatrix[5], -rotationMatrix[8]);
             const right = new SPLAT.Vector3(rotationMatrix[0], rotationMatrix[3], rotationMatrix[6]);
 
-            if (keys.KeyS) _target = _target.add(forward.multiply(moveSpeed));
-            if (keys.KeyW) _target = _target.subtract(forward.multiply(moveSpeed));
-            if (keys.KeyA) _target = _target.subtract(right.multiply(moveSpeed));
-            if (keys.KeyD) _target = _target.add(right.multiply(moveSpeed));
-            if (keys.KeyE) _alpha += rotateSpeed;
-            if (keys.KeyQ) _alpha -= rotateSpeed;
-            if (keys.KeyR) _beta += rotateSpeed;
-            if (keys.KeyF) _beta -= rotateSpeed;
+            if (keys.KeyS) goalTarget = goalTarget.add(forward.multiply(moveSpeed));
+            if (keys.KeyW) goalTarget = goalTarget.subtract(forward.multiply(moveSpeed));
+            if (keys.KeyA) goalTarget = goalTarget.subtract(right.multiply(moveSpeed));
+            if (keys.KeyD) goalTarget = goalTarget.add(right.multiply(moveSpeed));
+            if (keys.KeyE) goalAlpha += rotateSpeed;
+            if (keys.KeyQ) goalAlpha -= rotateSpeed;
+            if (keys.KeyR) goalBeta += rotateSpeed;
+            if (keys.KeyF) goalBeta -= rotateSpeed;
             if (keys.KeyZ) this.roll -= rotateSpeed;
             if (keys.KeyX) this.roll += rotateSpeed;
         };
