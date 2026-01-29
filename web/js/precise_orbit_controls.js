@@ -75,7 +75,14 @@ export class PreciseOrbitControls {
             if (e.code === "ArrowDown") keys.KeyS = false;
             if (e.code === "ArrowLeft") keys.KeyA = false;
             if (e.code === "ArrowRight") keys.KeyD = false;
-            if (!e.shiftKey) isShiftPressed = false;
+            isShiftPressed = e.shiftKey;
+        };
+
+        const onBlur = () => {
+            for (const key in keys) {
+                keys[key] = false;
+            }
+            isShiftPressed = false;
         };
 
         const onMouseDown = (e) => {
@@ -247,12 +254,14 @@ export class PreciseOrbitControls {
             if (inputEnabled) {
                 window.removeEventListener("keydown", onKeyDown);
                 window.removeEventListener("keyup", onKeyUp);
+                window.removeEventListener("blur", onBlur);
             }
         };
 
         if (inputEnabled) {
             window.addEventListener("keydown", onKeyDown);
             window.addEventListener("keyup", onKeyUp);
+            window.addEventListener("blur", onBlur);
         }
         canvas.addEventListener("mousedown", onMouseDown);
         canvas.addEventListener("mousemove", onMouseMove);
