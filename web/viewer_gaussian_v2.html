@@ -158,6 +158,139 @@
             font-size: 11px;
             min-width: 110px;
         }
+
+        /* Alignment Tool Styles */
+        .alignment-panel {
+            position: absolute;
+            top: 40px;
+            right: 8px;
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 10px;
+            width: 220px;
+            z-index: 100;
+            color: #eee;
+            font-size: 11px;
+        }
+
+        .alignment-panel h3 {
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #6cc;
+            border-bottom: 1px solid #333;
+            padding-bottom: 4px;
+        }
+
+        .point-list {
+            max-height: 120px;
+            overflow-y: auto;
+            margin-bottom: 8px;
+            border: 1px solid #333;
+            background: #111;
+            padding: 4px;
+        }
+
+        .point-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 2px 4px;
+            margin-bottom: 2px;
+            background: #222;
+            border-radius: 2px;
+        }
+
+        .point-item:hover {
+            background: #333;
+        }
+
+        .point-item button {
+            background: #644;
+            color: white;
+            border: none;
+            padding: 0 4px;
+            cursor: pointer;
+            font-size: 9px;
+            border-radius: 2px;
+        }
+
+        .marker {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 60;
+        }
+
+        .marker-2d {
+            background: #ff0;
+            border: 1px solid #000;
+        }
+
+        .marker-3d {
+            background: #0f0;
+            border: 1px solid #000;
+        }
+
+        .marker-label {
+            position: absolute;
+            font-size: 9px;
+            color: white;
+            text-shadow: 1px 1px 1px black;
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 61;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+
+        .btn-group button {
+            flex: 1;
+            padding: 4px;
+            font-size: 10px;
+            background: #444;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .btn-group button:hover {
+            background: #555;
+        }
+
+        .btn-group button.active {
+            background: #6cc;
+            color: black;
+        }
+
+        .btn-primary {
+            width: 100%;
+            padding: 6px;
+            background: #2a2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .btn-primary:hover {
+            background: #3b3;
+        }
+
+        .btn-primary:disabled {
+            background: #444;
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
     </style>
 </head>
 <body>
@@ -189,6 +322,23 @@
 
         <div id="cameraInfo" class="info-panel" style="left: auto; right: 8px; font-size: 9px; line-height: 1.2;">
             <div id="cameraInfoContent"></div>
+        </div>
+
+        <div id="alignmentPanel" class="alignment-panel hidden">
+            <h3>Alignment Tool</h3>
+            <p style="font-size: 9px; color: #888; margin-bottom: 6px;">1. Click "Add Pair"<br>2. Click point on image (2D)<br>3. Click same point on splat (3D)</p>
+            <div id="pointList" class="point-list"></div>
+            <div class="btn-group">
+                <button id="btnAddPair">Add Pair</button>
+                <button id="btnClearPoints">Clear All</button>
+            </div>
+            <div style="margin-bottom: 8px;">
+                <label style="font-size: 10px; display: flex; align-items: center; gap: 4px;">
+                    <input type="checkbox" id="optFocal" checked> Optimize Focal
+                </label>
+            </div>
+            <button id="btnRunAlign" class="btn-primary" disabled>Run Alignment</button>
+            <div id="alignStatus" style="margin-top: 6px; font-size: 9px; color: #aaa; text-align: center;"></div>
         </div>
 
         <div id="helpPanel" class="info-panel hidden" style="left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 100; min-width: 250px;">
@@ -224,6 +374,7 @@
             <input type="number" id="focalScaleValue" min="0.2" max="3.0" step="0.01" value="1.0" title="Focal length scale value">
         </div>
         <button id="toggleHelp" title="Show keyboard shortcuts">?</button>
+        <button id="toggleAlignment" title="Align to reference image">Align</button>
         <button id="setCamera" title="Save current camera for render">Set Camera</button>
     </div>
 
@@ -259,6 +410,11 @@
         let lastCameraTarget = null;
         let lastSceneCenter = null;
         let lastSceneSize = null;
+
+        // Alignment state
+        let alignmentPoints = []; // { id, p2d: {x, y}, p3d: {x, y, z} }
+        let currentPickingState = null; // '2D' or '3D'
+        let currentPairId = null;
 
         // Default focal length
         const DEFAULT_FOCAL_LENGTH = 30;
@@ -322,6 +478,9 @@
                 const frame = () => {
                     controls.update();
                     updateCameraInfoDisplay();
+                    if (alignmentPanel && !alignmentPanel.classList.contains('hidden')) {
+                        updateMarkers();
+                    }
                     renderer.render(scene, camera);
                     animationId = requestAnimationFrame(frame);
                 };
@@ -414,6 +573,9 @@
             const frame = () => {
                 controls.update();
                 updateCameraInfoDisplay();
+                if (alignmentPanel && !alignmentPanel.classList.contains('hidden')) {
+                    updateMarkers();
+                }
                 renderer.render(scene, camera);
                 animationId = requestAnimationFrame(frame);
             };
@@ -1437,6 +1599,301 @@
             `;
         }
 
+        // Point Picking and Alignment Logic
+        function pick3DPoint(mouseX, mouseY) {
+            if (!camera || !currentSplat || !currentSplat.data || !currentSplat.data.positions) return null;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = ((mouseX - rect.left) / rect.width) * 2 - 1;
+            const y = -(((mouseY - rect.top) / rect.height) * 2 - 1);
+
+            const ray = camera.screenPointToRay(x, y);
+            const pos = camera.position;
+
+            const positions = currentSplat.data.positions;
+            const count = positions.length / 3;
+
+            let minDistSq = Infinity;
+            let bestPoint = null;
+
+            for (let i = 0; i < count; i++) {
+                const px = positions[i * 3];
+                const py = positions[i * 3 + 1];
+                const pz = positions[i * 3 + 2];
+
+                const vx = px - pos.x;
+                const vy = py - pos.y;
+                const vz = pz - pos.z;
+
+                const dot = vx * ray.x + vy * ray.y + vz * ray.z;
+                if (dot <= 0) continue;
+
+                const dx = vx - dot * ray.x;
+                const dy = vy - dot * ray.y;
+                const dz = vz - dot * ray.z;
+                const distSq = dx * dx + dy * dy + dz * dz;
+
+                const score = distSq * (1 + dot * 0.05);
+
+                if (score < minDistSq) {
+                    minDistSq = score;
+                    bestPoint = { x: px, y: py, z: pz };
+                }
+            }
+
+            return bestPoint;
+        }
+
+        function projectToScreen(p3d) {
+            if (!camera || !camera.data || !camera.data.viewProjectionMatrix) return null;
+
+            const p4 = new SPLAT.Vector4(p3d.x, p3d.y, p3d.z, 1);
+            const projected = p4.multiply(camera.data.viewProjectionMatrix);
+
+            if (projected.w <= 0) return null;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = (projected.x / projected.w * 0.5 + 0.5) * rect.width + rect.left;
+            const y = (-projected.y / projected.w * 0.5 + 0.5) * rect.height + rect.top;
+
+            return { x, y };
+        }
+
+        function updateMarkers() {
+            document.querySelectorAll('.marker, .marker-label').forEach(el => el.remove());
+
+            const rect = canvas.getBoundingClientRect();
+
+            alignmentPoints.forEach((pair, index) => {
+                if (pair.p2d) {
+                    const mx = rect.left + pair.p2d.x * rect.width;
+                    const my = rect.top + pair.p2d.y * rect.height;
+                    createMarker(mx, my, `${index+1}`, 'marker-2d');
+                }
+                if (pair.p3d) {
+                    const screenPos = projectToScreen(pair.p3d);
+                    if (screenPos) {
+                        createMarker(screenPos.x, screenPos.y, `${index+1}`, 'marker-3d');
+                    }
+                }
+            });
+        }
+
+        function createMarker(x, y, label, className) {
+            const container = document.getElementById('viewerContainer');
+            const dot = document.createElement('div');
+            dot.className = `marker ${className}`;
+            dot.style.left = `${x}px`;
+            dot.style.top = `${y}px`;
+            container.appendChild(dot);
+
+            const lbl = document.createElement('div');
+            lbl.className = 'marker-label';
+            lbl.style.left = `${x + 6}px`;
+            lbl.style.top = `${y - 6}px`;
+            lbl.textContent = label;
+            container.appendChild(lbl);
+        }
+
+        function updatePointListUI() {
+            const pointList = document.getElementById('pointList');
+            const btnRunAlign = document.getElementById('btnRunAlign');
+            if (!pointList) return;
+
+            pointList.innerHTML = '';
+            alignmentPoints.forEach((pair, index) => {
+                const item = document.createElement('div');
+                item.className = 'point-item';
+                item.innerHTML = `
+                    <span>#${index+1}: ${pair.p2d ? '2D ✓' : '2D ?'} ${pair.p3d ? '3D ✓' : '3D ?'}</span>
+                    <button onclick="removePair('${pair.id}')">X</button>
+                `;
+                pointList.appendChild(item);
+            });
+
+            if (btnRunAlign) {
+                btnRunAlign.disabled = alignmentPoints.filter(p => p.p2d && p.p3d).length < 3;
+            }
+            updateMarkers();
+        }
+
+        window.removePair = (id) => {
+            alignmentPoints = alignmentPoints.filter(p => p.id !== id);
+            if (currentPairId === id) cancelPicking();
+            updatePointListUI();
+        };
+
+        function clearPoints() {
+            alignmentPoints = [];
+            cancelPicking();
+            updatePointListUI();
+        }
+
+        function cancelPicking() {
+            currentPickingState = null;
+            currentPairId = null;
+            const btnAddPair = document.getElementById('btnAddPair');
+            if (btnAddPair) btnAddPair.classList.remove('active');
+            updateStatus('');
+        }
+
+        function addPair() {
+            const id = Math.random().toString(36).substr(2, 9);
+            alignmentPoints.push({ id, p2d: null, p3d: null });
+            currentPairId = id;
+            currentPickingState = '2D';
+            const btnAddPair = document.getElementById('btnAddPair');
+            if (btnAddPair) btnAddPair.classList.add('active');
+            updateStatus('Click on image (2D point)');
+            updatePointListUI();
+        }
+
+        function updateStatus(msg) {
+            const alignStatus = document.getElementById('alignStatus');
+            if (alignStatus) alignStatus.textContent = msg;
+        }
+
+        async function runAlignment() {
+            const validPairs = alignmentPoints.filter(p => p.p2d && p.p3d);
+            if (validPairs.length < 3) {
+                updateStatus('Need at least 3 points');
+                return;
+            }
+
+            const btnRunAlign = document.getElementById('btnRunAlign');
+            btnRunAlign.disabled = true;
+            updateStatus('Optimizing...');
+
+            const optFocal = document.getElementById('optFocal').checked;
+
+            // Initial parameters from controls
+            let params = {
+                tx: controls.currentAlpha !== undefined ? controls.targetTarget.x : 0,
+                ty: controls.currentAlpha !== undefined ? controls.targetTarget.y : 0,
+                tz: controls.currentAlpha !== undefined ? controls.targetTarget.z : 0,
+                alpha: controls.currentAlpha !== undefined ? controls.currentAlpha : 0,
+                beta: controls.currentAlpha !== undefined ? controls.currentBeta : 0,
+                radius: controls.currentAlpha !== undefined ? controls.currentRadius : 5,
+                roll: controls.currentAlpha !== undefined ? controls.currentRoll : 0,
+                focal: parseFloat(focalScaleInput.value) || 1.0
+            };
+
+            const lr = 0.005;
+            const iterations = 1000;
+
+            // Numerical gradient descent
+            for (let iter = 0; iter < iterations; iter++) {
+                let gradients = { tx: 0, ty: 0, tz: 0, alpha: 0, beta: 0, radius: 0, roll: 0, focal: 0 };
+                let currentLoss = computeLoss(params, validPairs);
+
+                const eps = 1e-6;
+                for (let key in params) {
+                    if (key === 'focal' && !optFocal) continue;
+
+                    const originalVal = params[key];
+                    params[key] += eps;
+                    const lossPlus = computeLoss(params, validPairs);
+                    params[key] = originalVal;
+
+                    gradients[key] = (lossPlus - currentLoss) / eps;
+                }
+
+                // Update parameters
+                for (let key in params) {
+                    if (key === 'focal' && !optFocal) continue;
+
+                    let step = gradients[key] * lr;
+
+                    // Simple heuristics for different parameter scales
+                    if (key === 'tx' || key === 'ty' || key === 'tz') step *= 10;
+                    if (key === 'radius') step *= params.radius;
+                    if (key === 'focal') step *= 0.1;
+
+                    params[key] -= step;
+                }
+
+                if (iter % 100 === 0) {
+                    console.log(`Iteration ${iter}, Loss: ${currentLoss.toFixed(6)}`);
+                    applyParamsToCamera(params);
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            applyParamsToCamera(params);
+            btnRunAlign.disabled = false;
+            updateStatus('Alignment complete');
+        }
+
+        function computeLoss(p, pairs) {
+            let totalError = 0;
+            const camState = computeCameraState(p);
+            const fx = (baseFocalLength || DEFAULT_FOCAL_LENGTH) * p.focal;
+            const fy = (baseFocalY || DEFAULT_FOCAL_LENGTH) * p.focal;
+
+            const rect = canvas.getBoundingClientRect();
+            const cx = rect.width / 2;
+            const cy = rect.height / 2;
+
+            pairs.forEach(pair => {
+                const projected = project(pair.p3d, camState.position, camState.rotation, fx, fy, cx, cy);
+                if (projected) {
+                    const dx = projected.x / rect.width - pair.p2d.x;
+                    const dy = projected.y / rect.height - pair.p2d.y;
+                    totalError += dx * dx + dy * dy;
+                } else {
+                    totalError += 1.0;
+                }
+            });
+
+            return totalError / pairs.length;
+        }
+
+        function computeCameraState(p) {
+            const x = p.tx + p.radius * Math.sin(p.alpha) * Math.cos(p.beta);
+            const y = p.ty - p.radius * Math.sin(p.beta);
+            const z = p.tz - p.radius * Math.cos(p.alpha) * Math.cos(p.beta);
+            const position = new SPLAT.Vector3(x, y, z);
+
+            const target = new SPLAT.Vector3(p.tx, p.ty, p.tz);
+            const lookDir = target.subtract(position).normalize();
+            const pitch = Math.asin(-lookDir.y);
+            const yaw = Math.atan2(lookDir.x, lookDir.z);
+            const rotation = SPLAT.Quaternion.FromEuler(new SPLAT.Vector3(pitch, yaw, p.roll));
+
+            return { position, rotation };
+        }
+
+        function project(p3d, camPos, camRot, fx, fy, cx, cy) {
+            const rel = new SPLAT.Vector3(p3d.x - camPos.x, p3d.y - camPos.y, p3d.z - camPos.z);
+            const invRot = camRot.inverse();
+            const pCam = invRot.apply(rel);
+
+            if (pCam.z <= 0) return null;
+
+            const u = (pCam.x * fx) / pCam.z + cx;
+            const v = (pCam.y * fy) / pCam.z + cy;
+
+            return { x: u, y: v };
+        }
+
+        function applyParamsToCamera(p) {
+            controls.targetTarget = new SPLAT.Vector3(p.tx, p.ty, p.tz);
+            controls.targetAlpha = p.alpha;
+            controls.targetBeta = p.beta;
+            controls.targetRadius = p.radius;
+            controls.targetRoll = p.roll;
+
+            if (p.focal !== undefined) {
+                const fInput = document.getElementById('focalScale');
+                const fValue = document.getElementById('focalScaleValue');
+                if (fInput) fInput.value = p.focal;
+                if (fValue) fValue.value = p.focal;
+                applyFocalScale(p.focal);
+            }
+
+            controls.update();
+        }
+
         if (ratioSelect) {
             ratioSelect.addEventListener('change', (e) => {
                 setAspectRatio(e.target.value);
@@ -1447,6 +1904,59 @@
         // Event listeners
         document.getElementById('resetCamera').addEventListener('click', resetCamera);
         document.getElementById('setCamera').addEventListener('click', setCameraParams);
+
+        const alignmentPanel = document.getElementById('alignmentPanel');
+        const toggleAlignmentBtn = document.getElementById('toggleAlignment');
+
+        // Alignment Tool Event Listeners
+        const btnAddPair = document.getElementById('btnAddPair');
+        const btnClearPoints = document.getElementById('btnClearPoints');
+        const btnRunAlign = document.getElementById('btnRunAlign');
+
+        if (btnAddPair) btnAddPair.addEventListener('click', addPair);
+        if (btnClearPoints) btnClearPoints.addEventListener('click', clearPoints);
+        if (btnRunAlign) btnRunAlign.addEventListener('click', runAlignment);
+
+        canvas.addEventListener('click', (e) => {
+            if (!currentPickingState) return;
+
+            if (currentPickingState === '2D') {
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX - rect.left) / rect.width;
+                const y = (e.clientY - rect.top) / rect.height;
+
+                const pair = alignmentPoints.find(p => p.id === currentPairId);
+                if (pair) {
+                    pair.p2d = { x, y };
+                    currentPickingState = '3D';
+                    updateStatus('Click on splat (3D point)');
+                    updatePointListUI();
+                }
+            } else if (currentPickingState === '3D') {
+                const p3d = pick3DPoint(e.clientX, e.clientY);
+                if (p3d) {
+                    const pair = alignmentPoints.find(p => p.id === currentPairId);
+                    if (pair) {
+                        pair.p3d = p3d;
+                        cancelPicking();
+                        updatePointListUI();
+                    }
+                } else {
+                    updateStatus('No point found, try again');
+                }
+            }
+        });
+
+        if (toggleAlignmentBtn && alignmentPanel) {
+            toggleAlignmentBtn.addEventListener('click', () => {
+                const isHidden = alignmentPanel.classList.toggle('hidden');
+                toggleAlignmentBtn.style.background = isHidden ? '' : '#6cc';
+                toggleAlignmentBtn.style.color = isHidden ? '' : 'black';
+                if (isHidden) {
+                    cancelPicking();
+                }
+            });
+        }
 
         const helpPanel = document.getElementById('helpPanel');
         const toggleHelpBtn = document.getElementById('toggleHelp');
