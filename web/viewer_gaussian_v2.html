@@ -34,6 +34,19 @@
             justify-content: center;
         }
 
+        #renderSurface {
+            position: relative;
+            display: block;
+        }
+
+        #renderSurface > :not(canvas) {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
         canvas {
             display: block;
         }
@@ -298,10 +311,12 @@
 <body>
     <div id="viewerContainer">
         <div id="canvasWrapper">
-            <canvas id="canvas"></canvas>
-            <img id="overlayImage" style="position: absolute; pointer-events: none; opacity: 0.5; display: none; z-index: 35;">
-            <div id="cropFrame" aria-hidden="true"></div>
-            <svg id="markerLayer" class="marker-layer"></svg>
+            <div id="renderSurface">
+                <canvas id="canvas"></canvas>
+                <img id="overlayImage" style="pointer-events: none; opacity: 0.5; display: none; z-index: 35;">
+                <div id="cropFrame" aria-hidden="true"></div>
+                <svg id="markerLayer" class="marker-layer"></svg>
+            </div>
         </div>
 
         <div id="error" class="error hidden"></div>
@@ -333,6 +348,7 @@
             <div id="pointList" class="point-list"></div>
             <div class="btn-group">
                 <button id="btnAddPair">Add Pair</button>
+                <button id="btnSuggestPoints">Suggest Points</button>
                 <button id="btnClearPoints">Clear All</button>
             </div>
             <div style="margin-bottom: 8px;">
@@ -1220,20 +1236,14 @@
                 displayWidth = rect.height * aspect;
             }
 
-            canvas.style.width = `${displayWidth}px`;
-            canvas.style.height = `${displayHeight}px`;
-
-            const overlayImage = document.getElementById('overlayImage');
-            if (overlayImage) {
-                overlayImage.style.width = canvas.style.width;
-                overlayImage.style.height = canvas.style.height;
+            const surface = document.getElementById('renderSurface');
+            if (surface) {
+                surface.style.width = `${displayWidth}px`;
+                surface.style.height = `${displayHeight}px`;
             }
 
-            const markerLayer = document.getElementById('markerLayer');
-            if (markerLayer) {
-                markerLayer.style.width = canvas.style.width;
-                markerLayer.style.height = canvas.style.height;
-            }
+            canvas.style.width = `100%`;
+            canvas.style.height = `100%`;
         }
 
         function scheduleFrameLayoutUpdate() {
@@ -1693,8 +1703,9 @@
             if (projected.w <= 0) return null;
 
             // Return normalized 0..1 coordinates relative to canvas
+            // Note: gsplat projection matrix produces Y-down NDC
             const x = projected.x / projected.w * 0.5 + 0.5;
-            const y = -projected.y / projected.w * 0.5 + 0.5;
+            const y = projected.y / projected.w * 0.5 + 0.5;
 
             return { x, y };
         }
@@ -1916,8 +1927,10 @@
             pairs.forEach(pair => {
                 const proj = projectNDC(pair.p3d, camState.position, camState.rotation, ndcFx, ndcFy);
                 if (proj) {
+                    // targetX: -1 (left) to 1 (right)
+                    // targetY: -1 (top) to 1 (bottom) - matching gsplat Y-down NDC
                     const targetX = pair.p2d.x * 2 - 1;
-                    const targetY = -(pair.p2d.y * 2 - 1);
+                    const targetY = pair.p2d.y * 2 - 1;
 
                     const dx = proj.x - targetX;
                     const dy = proj.y - targetY;
@@ -1974,6 +1987,78 @@
             }
 
             controls.update();
+        }
+
+        async function suggestPoints() {
+            if (!overlayPixelData || !currentSplat || !currentSplat.data || !currentSplat.data.positions) {
+                updateStatus('Need reference image and splat');
+                extractOverlayPixelData();
+                if (!overlayPixelData) return;
+            }
+            updateStatus('Finding candidates...');
+
+            const positions = currentSplat.data.positions;
+            const colors = currentSplat.data.colors;
+            const count = positions.length / 3;
+
+            const focalScale = parseFloat(focalScaleInput.value) || 1.0;
+            const ndcFx = 2 * (baseFocalLength || DEFAULT_FOCAL_LENGTH) * focalScale / (nativeImageWidth || canvas.width || 512);
+            const ndcFy = 2 * (baseFocalY || DEFAULT_FOCAL_LENGTH) * focalScale / (nativeImageHeight || canvas.height || 512);
+            const camPos = camera.position;
+            const camRot = camera.rotation;
+
+            const candidates = [];
+            const sampleCount = 40000;
+            for (let i = 0; i < sampleCount; i++) {
+                const idx = Math.floor(Math.random() * count);
+                const p3d = { x: positions[idx*3], y: positions[idx*3+1], z: positions[idx*3+2] };
+                const proj = projectNDC(p3d, camPos, camRot, ndcFx, ndcFy);
+
+                if (proj && proj.x >= -1 && proj.x <= 1 && proj.y >= -1 && proj.y <= 1) {
+                    const ux = proj.x * 0.5 + 0.5;
+                    const uy = proj.y * 0.5 + 0.5;
+                    const ox = Math.floor(ux * overlayWidth);
+                    const oy = Math.floor(uy * overlayHeight);
+
+                    if (ox >= 0 && ox < overlayWidth && oy >= 0 && oy < overlayHeight) {
+                        const pixIdx = (oy * overlayWidth + ox) * 4;
+                        const dr = (overlayPixelData[pixIdx] - colors[idx*4]) / 255;
+                        const dg = (overlayPixelData[pixIdx+1] - colors[idx*4+1]) / 255;
+                        const db = (overlayPixelData[pixIdx+2] - colors[idx*4+2]) / 255;
+                        const diff = Math.sqrt(dr*dr + dg*dg + db*db);
+
+                        if (diff < 0.15) {
+                            candidates.push({ p3d, p2d: {x: ux, y: uy}, diff, id: Math.random().toString(36).substr(2, 9) });
+                        }
+                    }
+                }
+            }
+
+            candidates.sort((a, b) => a.diff - b.diff);
+            const finalPoints = [];
+            const minDist = 0.12;
+
+            for (const c of candidates) {
+                if (finalPoints.length >= 12) break;
+
+                const tooClose = finalPoints.some(p => {
+                    const dx = p.p2d.x - c.p2d.x;
+                    const dy = p.p2d.y - c.p2d.y;
+                    return Math.sqrt(dx*dx + dy*dy) < minDist;
+                });
+
+                if (!tooClose) {
+                    finalPoints.push(c);
+                }
+            }
+
+            if (finalPoints.length > 0) {
+                alignmentPoints = [...alignmentPoints, ...finalPoints];
+                updatePointListUI();
+                updateStatus(`Added ${finalPoints.length} points`);
+            } else {
+                updateStatus('No good matches found');
+            }
         }
 
         async function runAutoRefine() {
@@ -2069,7 +2154,7 @@
                 const proj = projectNDC(s.p3d, camState.position, camState.rotation, ndcFx, ndcFy);
                 if (proj && proj.x >= -1 && proj.x <= 1 && proj.y >= -1 && proj.y <= 1) {
                     const ux = proj.x * 0.5 + 0.5;
-                    const uy = -proj.y * 0.5 + 0.5;
+                    const uy = proj.y * 0.5 + 0.5;
                     const ox = Math.floor(ux * overlayWidth);
                     const oy = Math.floor(uy * overlayHeight);
                     if (ox >= 0 && ox < overlayWidth && oy >= 0 && oy < overlayHeight) {
@@ -2108,11 +2193,13 @@
 
         // Alignment Tool Event Listeners
         const btnAddPair = document.getElementById('btnAddPair');
+        const btnSuggestPoints = document.getElementById('btnSuggestPoints');
         const btnClearPoints = document.getElementById('btnClearPoints');
         const btnRunAlign = document.getElementById('btnRunAlign');
         const btnAutoRefine = document.getElementById('btnAutoRefine');
 
         if (btnAddPair) btnAddPair.addEventListener('click', addPair);
+        if (btnSuggestPoints) btnSuggestPoints.addEventListener('click', suggestPoints);
         if (btnClearPoints) btnClearPoints.addEventListener('click', clearPoints);
         if (btnRunAlign) btnRunAlign.addEventListener('click', runAlignment);
         if (btnAutoRefine) btnAutoRefine.addEventListener('click', runAutoRefine);
