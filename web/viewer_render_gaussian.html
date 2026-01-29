@@ -55,6 +55,8 @@
     <script src="./js/gsplat-bundle.js"></script>
 
     <script type="module">
+        import { PreciseOrbitControls } from './js/precise_orbit_controls.js';
+
         // Use the globally exported GSPLAT
         const SPLAT = window.GSPLAT;
 
@@ -90,7 +92,7 @@
                 scene = new SPLAT.Scene();
                 camera = new SPLAT.Camera();
                 renderer = new SPLAT.WebGLRenderer(canvas);
-                controls = new SPLAT.OrbitControls(camera, canvas);
+                controls = new PreciseOrbitControls(camera, canvas, 0.5, 0.5, 5, false);
 
                 camera.data.fx = DEFAULT_FOCAL_LENGTH;
                 camera.data.fy = DEFAULT_FOCAL_LENGTH;
@@ -291,6 +293,7 @@
 
             const position = cameraState.position;
             const target = cameraState.target;
+            const roll = cameraState.roll;
             const fx = cameraState.fx;
             const fy = cameraState.fy;
             const imageWidth = cameraState.image_width;
@@ -311,6 +314,10 @@
             if (target) {
                 const targetPos = new SPLAT.Vector3(target.x, target.y, target.z);
                 controls.setCameraTarget(targetPos);
+            }
+
+            if (roll !== undefined) {
+                controls.roll = roll;
             }
 
             controls.update();

@@ -199,6 +199,8 @@
     <script src="./js/gsplat-bundle.js"></script>
 
     <script type="module">
+        import { PreciseOrbitControls } from './js/precise_orbit_controls.js';
+
         // Use the globally exported GSPLAT
         const SPLAT = window.GSPLAT;
 
@@ -244,7 +246,7 @@
                 renderer = new SPLAT.WebGLRenderer(canvas);
                 
                 console.log('[GaussianViewer] Creating orbit controls...');
-                controls = new SPLAT.OrbitControls(camera, canvas);
+                controls = new PreciseOrbitControls(camera, canvas);
 
                 // Log zoom bounds and current zoom to help diagnose scroll limits.
                 console.log('[GaussianViewer] OrbitControls zoom bounds:', {
@@ -1103,6 +1105,7 @@
 
             const position = cameraState.position;
             const target = cameraState.target;
+            const roll = cameraState.roll;
             const fx = cameraState.fx;
             const fy = cameraState.fy;
             const scale = cameraState.scale;
@@ -1124,6 +1127,10 @@
 
             if (target && controls.setCameraTarget) {
                 controls.setCameraTarget(target);
+            }
+
+            if (roll !== undefined) {
+                controls.roll = roll;
             }
 
             if (scale) {
@@ -1166,6 +1173,7 @@
                     z: camera.position.z
                 },
                 target: target ? { x: target.x, y: target.y, z: target.z } : null,
+                roll: controls.roll || 0,
                 fx: camera.data?.fx || null,
                 fy: camera.data?.fy || null,
                 image_width: imageWidth,
