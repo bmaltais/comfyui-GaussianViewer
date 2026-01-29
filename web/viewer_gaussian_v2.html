@@ -215,34 +215,36 @@
             border-radius: 2px;
         }
 
-        .marker {
+        /* SVG Markers */
+        .marker-layer {
             position: absolute;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            transform: translate(-50%, -50%);
             pointer-events: none;
             z-index: 60;
+            overflow: visible;
         }
 
-        .marker-2d {
-            background: #ff0;
-            border: 1px solid #000;
+        .svg-marker-2d {
+            fill: #ff0;
+            stroke: #000;
+            stroke-width: 1;
         }
 
-        .marker-3d {
-            background: #0f0;
-            border: 1px solid #000;
+        .svg-marker-3d {
+            fill: #0f0;
+            stroke: #000;
+            stroke-width: 1;
         }
 
-        .marker-label {
-            position: absolute;
-            font-size: 9px;
-            color: white;
-            text-shadow: 1px 1px 1px black;
-            white-space: nowrap;
-            pointer-events: none;
-            z-index: 61;
+        .svg-marker-label {
+            font-size: 10px;
+            fill: white;
+            paint-order: stroke;
+            stroke: black;
+            stroke-width: 2px;
+            stroke-linecap: butt;
+            stroke-linejoin: miter;
+            font-weight: bold;
+            font-family: monospace;
         }
 
         .btn-group {
@@ -299,6 +301,7 @@
             <canvas id="canvas"></canvas>
             <img id="overlayImage" style="position: absolute; pointer-events: none; opacity: 0.5; display: none; z-index: 35;">
             <div id="cropFrame" aria-hidden="true"></div>
+            <svg id="markerLayer" class="marker-layer"></svg>
         </div>
 
         <div id="error" class="error hidden"></div>
@@ -419,6 +422,7 @@
         let overlayPixelData = null;
         let overlayWidth = 0;
         let overlayHeight = 0;
+        let refinementSamples = [];
 
         // Default focal length
         const DEFAULT_FOCAL_LENGTH = 30;
@@ -483,6 +487,7 @@
                     controls.update();
                     updateCameraInfoDisplay();
                     if (alignmentPanel && !alignmentPanel.classList.contains('hidden')) {
+                        if (camera) camera.update();
                         updateMarkers();
                     }
                     renderer.render(scene, camera);
@@ -578,6 +583,7 @@
                 controls.update();
                 updateCameraInfoDisplay();
                 if (alignmentPanel && !alignmentPanel.classList.contains('hidden')) {
+                    if (camera) camera.update();
                     updateMarkers();
                 }
                 renderer.render(scene, camera);
@@ -1222,6 +1228,12 @@
                 overlayImage.style.width = canvas.style.width;
                 overlayImage.style.height = canvas.style.height;
             }
+
+            const markerLayer = document.getElementById('markerLayer');
+            if (markerLayer) {
+                markerLayer.style.width = canvas.style.width;
+                markerLayer.style.height = canvas.style.height;
+            }
         }
 
         function scheduleFrameLayoutUpdate() {
@@ -1673,54 +1685,72 @@
         }
 
         function projectToScreen(p3d) {
-            if (!camera || !camera.data || !camera.data.viewProjectionMatrix) return null;
+            if (!camera || !camera.data || !camera.data.viewProj) return null;
 
             const p4 = new SPLAT.Vector4(p3d.x, p3d.y, p3d.z, 1);
-            const projected = p4.multiply(camera.data.viewProjectionMatrix);
+            const projected = p4.multiply(camera.data.viewProj);
 
             if (projected.w <= 0) return null;
 
-            const rect = canvas.getBoundingClientRect();
-            const x = (projected.x / projected.w * 0.5 + 0.5) * rect.width + rect.left;
-            const y = (-projected.y / projected.w * 0.5 + 0.5) * rect.height + rect.top;
+            // Return normalized 0..1 coordinates relative to canvas
+            const x = projected.x / projected.w * 0.5 + 0.5;
+            const y = -projected.y / projected.w * 0.5 + 0.5;
 
             return { x, y };
         }
 
         function updateMarkers() {
-            document.querySelectorAll('.marker, .marker-label').forEach(el => el.remove());
+            const layer = document.getElementById('markerLayer');
+            if (!layer) return;
+            layer.innerHTML = '';
 
-            const rect = canvas.getBoundingClientRect();
+            const w = layer.clientWidth;
+            const h = layer.clientHeight;
 
+            // Show manual alignment points
             alignmentPoints.forEach((pair, index) => {
                 if (pair.p2d) {
-                    const mx = rect.left + pair.p2d.x * rect.width;
-                    const my = rect.top + pair.p2d.y * rect.height;
-                    createMarker(mx, my, `${index+1}`, 'marker-2d');
+                    createSvgMarker(layer, pair.p2d.x * w, pair.p2d.y * h, `${index+1}`, 'svg-marker-2d');
                 }
                 if (pair.p3d) {
                     const screenPos = projectToScreen(pair.p3d);
                     if (screenPos) {
-                        createMarker(screenPos.x, screenPos.y, `${index+1}`, 'marker-3d');
+                        createSvgMarker(layer, screenPos.x * w, screenPos.y * h, `${index+1}`, 'svg-marker-3d');
                     }
                 }
             });
+
+            // Show Auto-Refine progress
+            if (refinementSamples.length > 0) {
+                refinementSamples.forEach(s => {
+                    const screenPos = projectToScreen(s.p3d);
+                    if (screenPos) {
+                        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                        circle.setAttribute("cx", screenPos.x * w);
+                        circle.setAttribute("cy", screenPos.y * h);
+                        circle.setAttribute("r", "1");
+                        circle.setAttribute("fill", "#0ff");
+                        circle.setAttribute("opacity", "0.4");
+                        layer.appendChild(circle);
+                    }
+                });
+            }
         }
 
-        function createMarker(x, y, label, className) {
-            const container = document.getElementById('viewerContainer');
-            const dot = document.createElement('div');
-            dot.className = `marker ${className}`;
-            dot.style.left = `${x}px`;
-            dot.style.top = `${y}px`;
-            container.appendChild(dot);
+        function createSvgMarker(layer, x, y, label, className) {
+            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            circle.setAttribute("cx", x);
+            circle.setAttribute("cy", y);
+            circle.setAttribute("r", "4");
+            circle.setAttribute("class", className);
+            layer.appendChild(circle);
 
-            const lbl = document.createElement('div');
-            lbl.className = 'marker-label';
-            lbl.style.left = `${x + 6}px`;
-            lbl.style.top = `${y - 6}px`;
-            lbl.textContent = label;
-            container.appendChild(lbl);
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute("x", x + 6);
+            text.setAttribute("y", y - 6);
+            text.setAttribute("class", "svg-marker-label");
+            text.textContent = label;
+            layer.appendChild(text);
         }
 
         function updatePointListUI() {
@@ -1820,17 +1850,17 @@
 
             // Initial parameters from controls
             let params = {
-                tx: controls.currentAlpha !== undefined ? controls.targetTarget.x : 0,
-                ty: controls.currentAlpha !== undefined ? controls.targetTarget.y : 0,
-                tz: controls.currentAlpha !== undefined ? controls.targetTarget.z : 0,
-                alpha: controls.currentAlpha !== undefined ? controls.currentAlpha : 0,
-                beta: controls.currentAlpha !== undefined ? controls.currentBeta : 0,
-                radius: controls.currentAlpha !== undefined ? controls.currentRadius : 5,
-                roll: controls.currentAlpha !== undefined ? controls.currentRoll : 0,
+                tx: controls.targetTarget.x,
+                ty: controls.targetTarget.y,
+                tz: controls.targetTarget.z,
+                alpha: controls.targetAlpha,
+                beta: controls.targetBeta,
+                radius: controls.targetRadius,
+                roll: controls.targetRoll,
                 focal: parseFloat(focalScaleInput.value) || 1.0
             };
 
-            const lr = 0.005;
+            const lr = 0.01;
             const iterations = 1000;
 
             // Numerical gradient descent
@@ -1857,7 +1887,7 @@
                     let step = gradients[key] * lr;
 
                     // Simple heuristics for different parameter scales
-                    if (key === 'tx' || key === 'ty' || key === 'tz') step *= 10;
+                    if (key === 'tx' || key === 'ty' || key === 'tz') step *= 20;
                     if (key === 'radius') step *= params.radius;
                     if (key === 'focal') step *= 0.1;
 
@@ -1879,21 +1909,21 @@
         function computeLoss(p, pairs) {
             let totalError = 0;
             const camState = computeCameraState(p);
-            const fx = (baseFocalLength || DEFAULT_FOCAL_LENGTH) * p.focal;
-            const fy = (baseFocalY || DEFAULT_FOCAL_LENGTH) * p.focal;
 
-            const rect = canvas.getBoundingClientRect();
-            const cx = rect.width / 2;
-            const cy = rect.height / 2;
+            const ndcFx = 2 * (baseFocalLength || DEFAULT_FOCAL_LENGTH) * p.focal / (nativeImageWidth || canvas.width || 512);
+            const ndcFy = 2 * (baseFocalY || DEFAULT_FOCAL_LENGTH) * p.focal / (nativeImageHeight || canvas.height || 512);
 
             pairs.forEach(pair => {
-                const projected = project(pair.p3d, camState.position, camState.rotation, fx, fy, cx, cy);
-                if (projected) {
-                    const dx = projected.x / rect.width - pair.p2d.x;
-                    const dy = projected.y / rect.height - pair.p2d.y;
+                const proj = projectNDC(pair.p3d, camState.position, camState.rotation, ndcFx, ndcFy);
+                if (proj) {
+                    const targetX = pair.p2d.x * 2 - 1;
+                    const targetY = -(pair.p2d.y * 2 - 1);
+
+                    const dx = proj.x - targetX;
+                    const dy = proj.y - targetY;
                     totalError += dx * dx + dy * dy;
                 } else {
-                    totalError += 1.0;
+                    totalError += 2.0;
                 }
             });
 
@@ -1915,17 +1945,17 @@
             return { position, rotation };
         }
 
-        function project(p3d, camPos, camRot, fx, fy, cx, cy) {
+        function projectNDC(p3d, camPos, camRot, ndcFx, ndcFy) {
             const rel = new SPLAT.Vector3(p3d.x - camPos.x, p3d.y - camPos.y, p3d.z - camPos.z);
             const invRot = camRot.inverse();
             const pCam = invRot.apply(rel);
 
             if (pCam.z <= 0) return null;
 
-            const u = (pCam.x * fx) / pCam.z + cx;
-            const v = (pCam.y * fy) / pCam.z + cy;
-
-            return { x: u, y: v };
+            return {
+                x: (pCam.x * ndcFx) / pCam.z,
+                y: -(pCam.y * ndcFy) / pCam.z
+            };
         }
 
         function applyParamsToCamera(p) {
@@ -1962,7 +1992,7 @@
             const count = positions.length / 3;
 
             // Sample random points
-            const sampleSize = 4000;
+            const sampleSize = 10000;
             const samples = [];
             for (let i = 0; i < sampleSize; i++) {
                 const idx = Math.floor(Math.random() * count);
@@ -1972,19 +2002,22 @@
                 });
             }
 
+            // Visualize progress with a subset
+            refinementSamples = samples.slice(0, 200);
+
             let params = {
                 tx: controls.targetTarget.x,
                 ty: controls.targetTarget.y,
                 tz: controls.targetTarget.z,
-                alpha: controls.currentAlpha,
-                beta: controls.currentBeta,
-                radius: controls.currentRadius,
-                roll: controls.currentRoll,
+                alpha: controls.targetAlpha,
+                beta: controls.targetBeta,
+                radius: controls.targetRadius,
+                roll: controls.targetRoll,
                 focal: parseFloat(focalScaleInput.value) || 1.0
             };
 
-            const iterations = 400;
-            const lr = 0.001;
+            const iterations = 800;
+            const lr = 0.002;
             const eps = 1e-6;
             const optFocal = document.getElementById('optFocal').checked;
 
@@ -2004,7 +2037,7 @@
                 for (let key in params) {
                     if (key === 'focal' && !optFocal) continue;
                     let step = gradients[key] * lr;
-                    if (key === 'tx' || key === 'ty' || key === 'tz') step *= 10;
+                    if (key === 'tx' || key === 'ty' || key === 'tz') step *= 20;
                     if (key === 'radius') step *= params.radius;
                     if (key === 'focal') step *= 0.1;
                     params[key] -= step;
@@ -2013,10 +2046,12 @@
                 if (iter % 40 === 0) {
                     console.log(`AutoRefine Iter ${iter}, Loss: ${currentLoss.toFixed(6)}`);
                     applyParamsToCamera(params);
+                    updateStatus(`Auto-aligning... ${Math.round(iter/iterations*100)}%`);
                     await new Promise(r => setTimeout(r, 0));
                 }
             }
 
+            refinementSamples = [];
             applyParamsToCamera(params);
             if (btnAutoRefine) btnAutoRefine.disabled = false;
             updateStatus('Auto-align complete');
@@ -2025,25 +2060,25 @@
         function computePhotometricLoss(p, samples) {
             let totalError = 0;
             const camState = computeCameraState(p);
-            const fx = (baseFocalLength || DEFAULT_FOCAL_LENGTH) * p.focal;
-            const fy = (baseFocalY || DEFAULT_FOCAL_LENGTH) * p.focal;
 
-            const rect = canvas.getBoundingClientRect();
-            const cx = rect.width / 2;
-            const cy = rect.height / 2;
+            const ndcFx = 2 * (baseFocalLength || DEFAULT_FOCAL_LENGTH) * p.focal / (nativeImageWidth || canvas.width || 512);
+            const ndcFy = 2 * (baseFocalY || DEFAULT_FOCAL_LENGTH) * p.focal / (nativeImageHeight || canvas.height || 512);
 
             let visibleCount = 0;
             samples.forEach(s => {
-                const proj = project(s.p3d, camState.position, camState.rotation, fx, fy, cx, cy);
-                if (proj && proj.x >= 0 && proj.x < rect.width && proj.y >= 0 && proj.y < rect.height) {
-                    const ox = Math.floor((proj.x / rect.width) * overlayWidth);
-                    const oy = Math.floor((proj.y / rect.height) * overlayHeight);
+                const proj = projectNDC(s.p3d, camState.position, camState.rotation, ndcFx, ndcFy);
+                if (proj && proj.x >= -1 && proj.x <= 1 && proj.y >= -1 && proj.y <= 1) {
+                    const ux = proj.x * 0.5 + 0.5;
+                    const uy = -proj.y * 0.5 + 0.5;
+                    const ox = Math.floor(ux * overlayWidth);
+                    const oy = Math.floor(uy * overlayHeight);
                     if (ox >= 0 && ox < overlayWidth && oy >= 0 && oy < overlayHeight) {
                         const idx = (oy * overlayWidth + ox) * 4;
-                        const dr = (overlayPixelData[idx] - s.color.r) / 255;
-                        const dg = (overlayPixelData[idx+1] - s.color.g) / 255;
-                        const db = (overlayPixelData[idx+2] - s.color.b) / 255;
-                        totalError += (dr*dr + dg*dg + db*db);
+                        // Robust L1 loss
+                        const dr = Math.abs(overlayPixelData[idx] - s.color.r) / 255;
+                        const dg = Math.abs(overlayPixelData[idx+1] - s.color.g) / 255;
+                        const db = Math.abs(overlayPixelData[idx+2] - s.color.b) / 255;
+                        totalError += (dr + dg + db) / 3.0;
                         visibleCount++;
                     }
                 }
