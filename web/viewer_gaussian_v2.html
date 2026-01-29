@@ -588,6 +588,7 @@
             // Update orbit controls to orbit around the target point
             // This recalculates the internal orbit state from current camera.position
             controls.setCameraTarget(targetPos);
+            controls.snap();
 
             console.log('[GaussianViewer] Camera set to position:', camPosX, camPosY, camPosZ);
             console.log('[GaussianViewer] Looking at target:', targetX, targetY, targetZ);
@@ -819,6 +820,7 @@
                     // Set the target - this recalculates orbit state from current camera.position
                     if (initialCameraData.target) {
                         controls.setCameraTarget(initialCameraData.target);
+                        controls.snap();
                     }
 
                     console.log('[GaussianViewer] Reset camera to position:', pos.x, pos.y, pos.z);
@@ -1127,6 +1129,7 @@
 
             if (target && controls.setCameraTarget) {
                 controls.setCameraTarget(target);
+                controls.snap();
             }
 
             if (roll !== undefined) {

@@ -283,7 +283,7 @@
             camera.position.y = camPosY;
             camera.position.z = camPosZ;
             controls.setCameraTarget(targetPos);
-            controls.update();
+            controls.snap();
 
             console.log('[RenderGaussian] Camera set - position:', camPosX, camPosY, camPosZ, 'target:', targetX, targetY, targetZ);
         }
@@ -314,6 +314,7 @@
             if (target) {
                 const targetPos = new SPLAT.Vector3(target.x, target.y, target.z);
                 controls.setCameraTarget(targetPos);
+                controls.snap();
             }
 
             if (roll !== undefined) {

@@ -32,11 +32,13 @@ export class PreciseOrbitControls {
         let lastMouseX = 0;
         let lastMouseY = 0;
         let touchDistance = 0;
+        let isUpdating = false;
 
         const keys = {};
         let isShiftPressed = false;
 
         const onObjectChanged = () => {
+            if (isUpdating) return;
             const euler = this.camera.rotation.toEuler();
             goalAlpha = -euler.y;
             goalBeta = -euler.x;
@@ -56,6 +58,14 @@ export class PreciseOrbitControls {
             goalBeta = Math.atan2(dy, Math.sqrt(dx * dx + dz * dz));
             goalAlpha = -Math.atan2(dx, dz);
             goalTarget = new SPLAT.Vector3(t.x, t.y, t.z);
+        };
+
+        this.snap = () => {
+            currentAlpha = goalAlpha;
+            currentBeta = goalBeta;
+            currentRadius = goalRadius;
+            currentTarget = goalTarget.clone();
+            this.update();
         };
 
         const getZoomScale = () => 0.1 + 0.9 * (goalRadius - this.minZoom) / (this.maxZoom - this.minZoom);
@@ -200,6 +210,7 @@ export class PreciseOrbitControls {
         const lerp = (a, b, t) => (1 - t) * a + t * b;
 
         this.update = () => {
+            isUpdating = true;
             currentAlpha = lerp(currentAlpha, goalAlpha, this.dampening);
             currentBeta = lerp(currentBeta, goalBeta, this.dampening);
             currentRadius = lerp(currentRadius, goalRadius, this.dampening);
@@ -232,6 +243,7 @@ export class PreciseOrbitControls {
             if (keys.KeyF) goalBeta -= rotateSpeed;
             if (keys.KeyZ) this.roll -= rotateSpeed;
             if (keys.KeyX) this.roll += rotateSpeed;
+            isUpdating = false;
         };
 
         const preventDefaults = (e) => {
