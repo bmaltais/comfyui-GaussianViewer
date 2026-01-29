@@ -337,7 +337,8 @@
                     <input type="checkbox" id="optFocal" checked> Optimize Focal
                 </label>
             </div>
-            <button id="btnRunAlign" class="btn-primary" disabled>Run Alignment</button>
+            <button id="btnRunAlign" class="btn-primary" disabled style="margin-bottom: 4px;">Run Alignment</button>
+            <button id="btnAutoRefine" class="btn-primary" style="background: #26a;">Auto Refine</button>
             <div id="alignStatus" style="margin-top: 6px; font-size: 9px; color: #aaa; text-align: center;"></div>
         </div>
 
@@ -415,6 +416,9 @@
         let alignmentPoints = []; // { id, p2d: {x, y}, p3d: {x, y, z} }
         let currentPickingState = null; // '2D' or '3D'
         let currentPairId = null;
+        let overlayPixelData = null;
+        let overlayWidth = 0;
+        let overlayHeight = 0;
 
         // Default focal length
         const DEFAULT_FOCAL_LENGTH = 30;
@@ -1600,7 +1604,7 @@
         }
 
         // Point Picking and Alignment Logic
-        function pick3DPoint(mouseX, mouseY) {
+        function pick3DPoint(mouseX, mouseY, targetColor = null) {
             if (!camera || !currentSplat || !currentSplat.data || !currentSplat.data.positions) return null;
 
             const rect = canvas.getBoundingClientRect();
@@ -1611,12 +1615,17 @@
             const pos = camera.position;
 
             const positions = currentSplat.data.positions;
+            const colors = currentSplat.data.colors;
             const count = positions.length / 3;
+            const hasColors = colors && colors.length >= count * 3;
 
             let minDistSq = Infinity;
             let bestPoint = null;
 
-            for (let i = 0; i < count; i++) {
+            // Sample every Nth point if the cloud is huge to keep picking responsive
+            const step = count > 500000 ? Math.floor(count / 500000) : 1;
+
+            for (let i = 0; i < count; i += step) {
                 const px = positions[i * 3];
                 const py = positions[i * 3 + 1];
                 const pz = positions[i * 3 + 2];
@@ -1633,7 +1642,26 @@
                 const dz = vz - dot * ray.z;
                 const distSq = dx * dx + dy * dy + dz * dz;
 
-                const score = distSq * (1 + dot * 0.05);
+                // Base score is spatial distance to ray
+                let score = distSq;
+
+                // Heuristic 1: Prefer points closer to camera to avoid picking background through sparse areas
+                score *= (1 + dot * 0.01);
+
+                // Heuristic 2: Color matching (if available)
+                if (targetColor && hasColors) {
+                    const r = colors[i * 4];
+                    const g = colors[i * 4 + 1];
+                    const b = colors[i * 4 + 2];
+
+                    const dr = (r - targetColor.r) / 255;
+                    const dg = (g - targetColor.g) / 255;
+                    const db = (b - targetColor.b) / 255;
+                    const colorDistSq = (dr*dr + dg*dg + db*db) / 3.0;
+
+                    // Penalize color mismatch.
+                    score *= (1 + colorDistSq * 50);
+                }
 
                 if (score < minDistSq) {
                     minDistSq = score;
@@ -1739,7 +1767,7 @@
 
         function addPair() {
             const id = Math.random().toString(36).substr(2, 9);
-            alignmentPoints.push({ id, p2d: null, p3d: null });
+            alignmentPoints.push({ id, p2d: null, p3d: null, color: null });
             currentPairId = id;
             currentPickingState = '2D';
             const btnAddPair = document.getElementById('btnAddPair');
@@ -1751,6 +1779,30 @@
         function updateStatus(msg) {
             const alignStatus = document.getElementById('alignStatus');
             if (alignStatus) alignStatus.textContent = msg;
+        }
+
+        function extractOverlayPixelData() {
+            const img = document.getElementById('overlayImage');
+            if (!img || !img.complete || img.naturalWidth === 0) {
+                console.warn('[GaussianViewer] Overlay image not ready for pixel extraction');
+                return;
+            }
+
+            try {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = img.naturalWidth;
+                tempCanvas.height = img.naturalHeight;
+                const ctx = tempCanvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+
+                overlayWidth = img.naturalWidth;
+                overlayHeight = img.naturalHeight;
+                overlayPixelData = ctx.getImageData(0, 0, overlayWidth, overlayHeight).data;
+                console.log(`[GaussianViewer] Extracted overlay pixel data: ${overlayWidth}x${overlayHeight}`);
+            } catch (err) {
+                console.error('[GaussianViewer] Failed to extract overlay pixel data:', err);
+                overlayPixelData = null;
+            }
         }
 
         async function runAlignment() {
@@ -1894,6 +1946,112 @@
             controls.update();
         }
 
+        async function runAutoRefine() {
+            if (!overlayPixelData || !currentSplat || !currentSplat.data || !currentSplat.data.positions) {
+                updateStatus('Need reference image and splat');
+                extractOverlayPixelData();
+                if (!overlayPixelData) return;
+            }
+
+            const btnAutoRefine = document.getElementById('btnAutoRefine');
+            if (btnAutoRefine) btnAutoRefine.disabled = true;
+            updateStatus('Auto-aligning...');
+
+            const positions = currentSplat.data.positions;
+            const colors = currentSplat.data.colors;
+            const count = positions.length / 3;
+
+            // Sample random points
+            const sampleSize = 4000;
+            const samples = [];
+            for (let i = 0; i < sampleSize; i++) {
+                const idx = Math.floor(Math.random() * count);
+                samples.push({
+                    p3d: { x: positions[idx*3], y: positions[idx*3+1], z: positions[idx*3+2] },
+                    color: { r: colors[idx*4], g: colors[idx*4+1], b: colors[idx*4+2] }
+                });
+            }
+
+            let params = {
+                tx: controls.targetTarget.x,
+                ty: controls.targetTarget.y,
+                tz: controls.targetTarget.z,
+                alpha: controls.currentAlpha,
+                beta: controls.currentBeta,
+                radius: controls.currentRadius,
+                roll: controls.currentRoll,
+                focal: parseFloat(focalScaleInput.value) || 1.0
+            };
+
+            const iterations = 400;
+            const lr = 0.001;
+            const eps = 1e-6;
+            const optFocal = document.getElementById('optFocal').checked;
+
+            for (let iter = 0; iter < iterations; iter++) {
+                let currentLoss = computePhotometricLoss(params, samples);
+                let gradients = { tx: 0, ty: 0, tz: 0, alpha: 0, beta: 0, radius: 0, roll: 0, focal: 0 };
+
+                for (let key in params) {
+                    if (key === 'focal' && !optFocal) continue;
+                    const originalVal = params[key];
+                    params[key] += eps;
+                    const lossPlus = computePhotometricLoss(params, samples);
+                    params[key] = originalVal;
+                    gradients[key] = (lossPlus - currentLoss) / eps;
+                }
+
+                for (let key in params) {
+                    if (key === 'focal' && !optFocal) continue;
+                    let step = gradients[key] * lr;
+                    if (key === 'tx' || key === 'ty' || key === 'tz') step *= 10;
+                    if (key === 'radius') step *= params.radius;
+                    if (key === 'focal') step *= 0.1;
+                    params[key] -= step;
+                }
+
+                if (iter % 40 === 0) {
+                    console.log(`AutoRefine Iter ${iter}, Loss: ${currentLoss.toFixed(6)}`);
+                    applyParamsToCamera(params);
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            applyParamsToCamera(params);
+            if (btnAutoRefine) btnAutoRefine.disabled = false;
+            updateStatus('Auto-align complete');
+        }
+
+        function computePhotometricLoss(p, samples) {
+            let totalError = 0;
+            const camState = computeCameraState(p);
+            const fx = (baseFocalLength || DEFAULT_FOCAL_LENGTH) * p.focal;
+            const fy = (baseFocalY || DEFAULT_FOCAL_LENGTH) * p.focal;
+
+            const rect = canvas.getBoundingClientRect();
+            const cx = rect.width / 2;
+            const cy = rect.height / 2;
+
+            let visibleCount = 0;
+            samples.forEach(s => {
+                const proj = project(s.p3d, camState.position, camState.rotation, fx, fy, cx, cy);
+                if (proj && proj.x >= 0 && proj.x < rect.width && proj.y >= 0 && proj.y < rect.height) {
+                    const ox = Math.floor((proj.x / rect.width) * overlayWidth);
+                    const oy = Math.floor((proj.y / rect.height) * overlayHeight);
+                    if (ox >= 0 && ox < overlayWidth && oy >= 0 && oy < overlayHeight) {
+                        const idx = (oy * overlayWidth + ox) * 4;
+                        const dr = (overlayPixelData[idx] - s.color.r) / 255;
+                        const dg = (overlayPixelData[idx+1] - s.color.g) / 255;
+                        const db = (overlayPixelData[idx+2] - s.color.b) / 255;
+                        totalError += (dr*dr + dg*dg + db*db);
+                        visibleCount++;
+                    }
+                }
+            });
+
+            return visibleCount > 0 ? totalError / visibleCount : 1.0;
+        }
+
         if (ratioSelect) {
             ratioSelect.addEventListener('change', (e) => {
                 setAspectRatio(e.target.value);
@@ -1905,6 +2063,11 @@
         document.getElementById('resetCamera').addEventListener('click', resetCamera);
         document.getElementById('setCamera').addEventListener('click', setCameraParams);
 
+        const overlayImage = document.getElementById('overlayImage');
+        if (overlayImage) {
+            overlayImage.onload = extractOverlayPixelData;
+        }
+
         const alignmentPanel = document.getElementById('alignmentPanel');
         const toggleAlignmentBtn = document.getElementById('toggleAlignment');
 
@@ -1912,10 +2075,12 @@
         const btnAddPair = document.getElementById('btnAddPair');
         const btnClearPoints = document.getElementById('btnClearPoints');
         const btnRunAlign = document.getElementById('btnRunAlign');
+        const btnAutoRefine = document.getElementById('btnAutoRefine');
 
         if (btnAddPair) btnAddPair.addEventListener('click', addPair);
         if (btnClearPoints) btnClearPoints.addEventListener('click', clearPoints);
         if (btnRunAlign) btnRunAlign.addEventListener('click', runAlignment);
+        if (btnAutoRefine) btnAutoRefine.addEventListener('click', runAutoRefine);
 
         canvas.addEventListener('click', (e) => {
             if (!currentPickingState) return;
@@ -1928,14 +2093,29 @@
                 const pair = alignmentPoints.find(p => p.id === currentPairId);
                 if (pair) {
                     pair.p2d = { x, y };
+
+                    // Capture color from overlay if available
+                    if (overlayPixelData && overlayWidth > 0 && overlayHeight > 0) {
+                        const px = Math.floor(x * overlayWidth);
+                        const py = Math.floor(y * overlayHeight);
+                        const idx = (py * overlayWidth + px) * 4;
+                        pair.color = {
+                            r: overlayPixelData[idx],
+                            g: overlayPixelData[idx+1],
+                            b: overlayPixelData[idx+2]
+                        };
+                        console.log(`[GaussianViewer] Captured color for point:`, pair.color);
+                    }
+
                     currentPickingState = '3D';
                     updateStatus('Click on splat (3D point)');
                     updatePointListUI();
                 }
             } else if (currentPickingState === '3D') {
-                const p3d = pick3DPoint(e.clientX, e.clientY);
+                const pair = alignmentPoints.find(p => p.id === currentPairId);
+                const targetColor = pair ? pair.color : null;
+                const p3d = pick3DPoint(e.clientX, e.clientY, targetColor);
                 if (p3d) {
-                    const pair = alignmentPoints.find(p => p.id === currentPairId);
                     if (pair) {
                         pair.p3d = p3d;
                         cancelPicking();
