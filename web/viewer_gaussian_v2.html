@@ -1569,7 +1569,13 @@
                 const requestId = event.data.request_id;
                 const resolution = event.data.output_resolution;
                 const aspectRatio = event.data.output_aspect_ratio;
-                console.log('[GaussianViewer] RENDER_REQUEST:', requestId, resolution, aspectRatio);
+                const cameraState = event.data.camera_state;
+                console.log('[GaussianViewer] RENDER_REQUEST:', requestId, resolution, aspectRatio, !!cameraState);
+
+                if (cameraState) {
+                    applyCameraState(cameraState);
+                }
+
                 renderForRequest(requestId, resolution, aspectRatio);
             } else if (type === 'OUTPUT_SETTINGS') {
                 const resolution = event.data?.output_resolution;

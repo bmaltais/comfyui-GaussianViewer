@@ -125,8 +125,8 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
                 )
                 rendered_img = rendered_tuple[0]
 
-                loss = self._compute_sift_loss(rendered_img, ref_kp, ref_des, sift)
-                print(f"[GaussianSIFTAlign] Pass loss: {loss:.4f}")
+                loss, matches = self._compute_sift_loss(rendered_img, ref_kp, ref_des, sift)
+                print(f"[GaussianSIFTAlign] Pass loss: {loss:.4f} (Matches: {matches})")
                 return loss
             except Exception as e:
                 print(f"[GaussianSIFTAlign] Iteration error: {e}")
@@ -234,7 +234,7 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
 
     def _compute_sift_loss(self, rendered_img, ref_kp, ref_des, sift):
         if rendered_img is None:
-            return 1e6
+            return 1e6, 0
 
         # Convert tensor to BGR
         rend_np = (rendered_img[0].cpu().numpy() * 255).astype(np.uint8)
@@ -242,13 +242,13 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
 
         rend_kp, rend_des = sift.detectAndCompute(rend_bgr, None)
         if rend_des is None:
-            return 1e6
+            return 1e6, 0
 
         bf = cv2.BFMatcher()
         try:
             matches = bf.knnMatch(ref_des, rend_des, k=2)
         except Exception as e:
-            return 1e6
+            return 1e6, 0
 
         good_matches = []
         for m, n in matches:
@@ -256,7 +256,7 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
                 good_matches.append(m)
 
         if len(good_matches) < 4:
-            return 1e6 - len(good_matches) * 100
+            return 1e6 - len(good_matches) * 100, len(good_matches)
 
         dist = 0
         for m in good_matches:
@@ -267,4 +267,4 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
         avg_dist = np.sqrt(dist / len(good_matches))
         loss = avg_dist + 500.0 / (len(good_matches) + 1)
 
-        return loss
+        return loss, len(good_matches)

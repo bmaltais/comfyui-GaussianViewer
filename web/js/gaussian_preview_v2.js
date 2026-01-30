@@ -140,6 +140,7 @@ app.registerExtension({
                         const requestId = message.request_id;
                         const resolution = message.output_resolution || 2048;
                         const aspectRatio = message.output_aspect_ratio || "source";
+                        const cameraState = message.camera_state || null;
 
                         iframe.contentWindow.postMessage({
                             type: "OUTPUT_SETTINGS",
@@ -151,7 +152,8 @@ app.registerExtension({
                             type: "RENDER_REQUEST",
                             request_id: requestId,
                             output_resolution: resolution,
-                            output_aspect_ratio: aspectRatio
+                            output_aspect_ratio: aspectRatio,
+                            camera_state: cameraState
                         }, "*");
 
                         console.log("[GeomPack Gaussian v2] Forwarded render request to preview iframe:", requestId);
