@@ -26,6 +26,7 @@ app.registerExtension({
             nodeType.prototype.onNodeCreated = function() {
                 const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
                 const isGaussianViewer = nodeData.name === "GaussianViewer";
+                const nodeId = this.id;
 
                 window.GEOMPACK_PREVIEW_IFRAMES = window.GEOMPACK_PREVIEW_IFRAMES || {};
 
@@ -123,7 +124,6 @@ app.registerExtension({
                 });
                 
                 if (isGaussianViewer) {
-                    const nodeId = this.id;
                     const handleRenderRequest = async (event) => {
                         const message = event?.detail || event;
                         if (!message?.request_id) {
