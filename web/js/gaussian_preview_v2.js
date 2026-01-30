@@ -26,7 +26,7 @@ app.registerExtension({
             nodeType.prototype.onNodeCreated = function() {
                 const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
                 const isGaussianViewer = nodeData.name === "GaussianViewer";
-                const nodeId = this.id;
+                const node = this;
 
                 window.GEOMPACK_PREVIEW_IFRAMES = window.GEOMPACK_PREVIEW_IFRAMES || {};
 
@@ -129,7 +129,7 @@ app.registerExtension({
                         if (!message?.request_id) {
                             return;
                         }
-                        if (message.node_id != null && message.node_id !== undefined && message.node_id !== nodeId) {
+                        if (message.node_id != null && message.node_id !== undefined && String(message.node_id) !== String(node.id)) {
                             return;
                         }
                         if (!iframe.contentWindow) {
@@ -307,7 +307,7 @@ app.registerExtension({
                                     filename: filename,
                                     overlay_image: overlayImage,
                                     camera_state: cameraState,
-                                    node_id: nodeId
+                                    node_id: node.id
                                 })
                             });
                             const result = await response.json();
@@ -336,7 +336,11 @@ app.registerExtension({
                     // Handle SIFT alignment stop request
                     else if (event.data.type === 'REQUEST_SIFT_ALIGN_STOP') {
                         try {
-                            await fetch('/geompack/sift_align_stop', { method: 'POST' });
+                            await fetch('/geompack/sift_align_stop', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ node_id: node.id })
+                            });
                         } catch (error) {
                             console.error('[GeomPack Gaussian v2] Failed to stop SIFT Align:', error);
                         }
@@ -378,7 +382,7 @@ app.registerExtension({
                     const data = event.detail;
 
                     // Respect node_id if provided
-                    if (data.node_id != null && data.node_id !== nodeId) {
+                    if (data.node_id != null && String(data.node_id) !== String(node.id)) {
                         return;
                     }
 

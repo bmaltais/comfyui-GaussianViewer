@@ -169,7 +169,6 @@ app.registerExtension({
 
                 // Store pending render requests
                 this.pendingRenderRequests = new Map();
-                const nodeId = this.id;
 
                 // Track iframe load state
                 let iframeLoaded = false;
@@ -280,7 +279,7 @@ app.registerExtension({
                     console.log("[GeomPack Render Gaussian] Request ID:", requestId);
                     
                     // Respect node_id if provided
-                    if (message.node_id != null && message.node_id !== nodeId) {
+                    if (message.node_id != null && String(message.node_id) !== String(node.id)) {
                         return;
                     }
 

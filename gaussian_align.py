@@ -11,6 +11,7 @@ from PIL import Image
 from scipy.optimize import minimize
 from scipy.spatial.transform import Rotation as R
 
+from . import render_gaussian
 from .render_gaussian import RenderGaussianNode
 from .camera_params import set_camera_state
 
@@ -44,7 +45,6 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
                 "initial_intrinsics": ("INTRINSICS", {
                     "tooltip": "Initial camera intrinsics"
                 }),
-                "learning_rate": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 10.0}),
             },
         }
 
@@ -54,7 +54,7 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
     CATEGORY = "geompack/alignment"
 
     def gaussian_sift_align(self, ply_path, reference_image, max_iterations,
-                            initial_extrinsics=None, initial_intrinsics=None, learning_rate=1.0, node_id=None):
+                            initial_extrinsics=None, initial_intrinsics=None, node_id=None):
         print(f"[GaussianSIFTAlign] Starting alignment with {max_iterations} iterations")
 
         # 1. Prepare reference image
@@ -106,8 +106,7 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
 
         def objective(p):
             # Check for stop flag
-            from . import render_gaussian
-            if render_gaussian.STOP_SIFT_ALIGNMENT:
+            if node_id is not None and str(node_id) in render_gaussian.STOP_SIFT_ALIGNMENT_NODES:
                 raise StopIteration
 
             # Convert p to camera state
@@ -136,8 +135,7 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
 
         def on_iteration(xk):
             # Check for stop flag
-            from . import render_gaussian
-            if render_gaussian.STOP_SIFT_ALIGNMENT:
+            if node_id is not None and str(node_id) in render_gaussian.STOP_SIFT_ALIGNMENT_NODES:
                 raise StopIteration
 
             # Send current state to frontend for visual update

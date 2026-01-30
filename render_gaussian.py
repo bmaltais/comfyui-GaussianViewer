@@ -33,8 +33,8 @@ from .camera_params import (
     set_camera_state,
 )
 
-# Global flag for stopping SIFT alignment
-STOP_SIFT_ALIGNMENT = False
+# Global flag for stopping SIFT alignment (set of node_ids)
+STOP_SIFT_ALIGNMENT_NODES = set()
 
 
 class RenderGaussianNode:
@@ -196,7 +196,7 @@ class RenderGaussianNode:
         # 4. Wait for render result from iframe
         wait_start = time.time()
         try:
-            base64_image = self._wait_for_render_result(request_id, timeout=30)
+            base64_image = self._wait_for_render_result(request_id, timeout=30, node_id=node_id)
             wait_end = time.time()
             print(f"[RenderGaussian] Render result received in {wait_end - wait_start:.3f}s")
             print(f"[RenderGaussian] Base64 image length: {len(base64_image)}")
@@ -261,7 +261,7 @@ class RenderGaussianNode:
         """Generate unique request ID for render operations."""
         return f"render-{uuid.uuid4().hex[:16]}"
 
-    def _wait_for_render_result(self, request_id, timeout=30):
+    def _wait_for_render_result(self, request_id, timeout=30, node_id=None):
         """
         Wait for render result with timeout.
         
@@ -269,8 +269,13 @@ class RenderGaussianNode:
         """
         import time
         start_time = time.time()
-        print(f"[RenderGaussian] Waiting for render result: request_id={request_id}, timeout={timeout}s")
+        print(f"[RenderGaussian] Waiting for render result: request_id={request_id}, timeout={timeout}s, node_id={node_id}")
         while time.time() - start_time < timeout:
+            # Check if this node's alignment was requested to stop
+            if node_id is not None and str(node_id) in STOP_SIFT_ALIGNMENT_NODES:
+                print(f"[RenderGaussian] Render wait interrupted by stop request for node {node_id}")
+                raise InterruptedError(f"Alignment stopped for node {node_id}")
+
             if request_id in RenderGaussianNode.render_results:
                 result = RenderGaussianNode.render_results.pop(request_id)
                 print(f"[RenderGaussian] Render result found for request_id={request_id}")
@@ -325,8 +330,9 @@ class RenderGaussianNode:
             print(f"[RenderGaussian] PromptServer not available: {e}")
             return
 
-        # Try to get node_id from various possible attributes
-        node_id = getattr(self, "id", None)
+        # Try to get node_id from various possible attributes if not provided
+        if node_id is None:
+            node_id = getattr(self, "id", None)
         if node_id is None:
             node_id = getattr(self, "node_id", None)
         if node_id is None:
@@ -341,7 +347,7 @@ class RenderGaussianNode:
         
         payload = {
             "request_id": request_id,
-            "node_id": node_id if node_id is not None else getattr(self, "id", None),
+            "node_id": node_id,
             "ply_file": ui_data.get("ply_file", [None])[0],
             "filename": ui_data.get("filename", [None])[0],
             "output_resolution": ui_data.get("output_resolution", [None])[0],
@@ -459,7 +465,9 @@ try:
             return web.json_response({"status": "error", "reason": "missing request_id or image"}, status=400)
 
         print(f"[RenderGaussian] render_result received: request_id={request_id}, image_len={len(image)}")
+        # Use class attribute to ensure we're writing to the shared storage
         RenderGaussianNode.render_results[request_id] = image
+        print(f"[RenderGaussian] Stored result for {request_id}. Pending results: {list(RenderGaussianNode.render_results.keys())}")
         return web.json_response({"status": "ok"})
 
     @PromptServer.instance.routes.post("/geompack/preview_camera")
@@ -517,8 +525,11 @@ try:
 
     @PromptServer.instance.routes.post("/geompack/sift_align")
     async def geompack_sift_align(request):
-        global STOP_SIFT_ALIGNMENT
-        STOP_SIFT_ALIGNMENT = False # Reset stop flag
+        data = await request.json()
+        node_id = data.get("node_id")
+
+        if node_id is not None:
+            STOP_SIFT_ALIGNMENT_NODES.discard(str(node_id))
 
         print("=" * 80)
         print("[RenderGaussian] ===== SIFT_ALIGN REQUEST RECEIVED =====")
@@ -587,7 +598,7 @@ try:
 
             print("[RenderGaussian] SIFT alignment complete")
             return web.json_response({"status": "ok", "camera_state": final_state})
-        except StopIteration:
+        except (StopIteration, InterruptedError):
             print("[RenderGaussian] SIFT alignment stopped by user")
             # Return current state in cache as result
             final_state = get_camera_state(ply_file) or get_camera_state(filename)
@@ -600,9 +611,14 @@ try:
 
     @PromptServer.instance.routes.post("/geompack/sift_align_stop")
     async def geompack_sift_align_stop(request):
-        global STOP_SIFT_ALIGNMENT
-        print("[RenderGaussian] Request to stop SIFT alignment received")
-        STOP_SIFT_ALIGNMENT = True
+        data = await request.json()
+        node_id = data.get("node_id")
+        print(f"[RenderGaussian] Request to stop SIFT alignment received for node {node_id}")
+        if node_id is not None:
+            STOP_SIFT_ALIGNMENT_NODES.add(str(node_id))
+        else:
+            # Fallback for old clients
+            print("[RenderGaussian] WARNING: Stop request without node_id")
         return web.json_response({"status": "ok"})
 
 except Exception as e:
