@@ -237,7 +237,10 @@
             <input type="number" id="focalScaleValue" min="0.2" max="3.0" step="0.01" value="1.0" title="Focal length scale value">
         </div>
         <button id="toggleHelp" title="Show keyboard shortcuts">?</button>
-        <button id="siftAlign" title="Auto-align to reference image using SIFT" style="background: #2a5a2a;">SIFT Align</button>
+        <div id="siftControls" style="display: flex; gap: 8px;">
+            <button id="siftAlign" title="Auto-align to reference image using SIFT" style="background: #2a5a2a;">SIFT Align</button>
+            <button id="siftAlignStop" title="Stop ongoing alignment" style="background: #5a2a2a; display: none;">Stop Align</button>
+        </div>
         <button id="setCamera" title="Save current camera for render">Set Camera</button>
     </div>
 
@@ -1461,7 +1464,10 @@
         // Event listeners
         document.getElementById('resetCamera').addEventListener('click', resetCamera);
         document.getElementById('setCamera').addEventListener('click', setCameraParams);
-        document.getElementById('siftAlign').addEventListener('click', () => {
+        const siftAlignBtn = document.getElementById('siftAlign');
+        const siftAlignStopBtn = document.getElementById('siftAlignStop');
+
+        siftAlignBtn.addEventListener('click', () => {
             const target = getCameraTarget();
             const cameraState = {
                 position: {
@@ -1478,9 +1484,19 @@
                 scale_compensation: gaussianScaleCompensation || null
             };
 
+            siftAlignBtn.style.display = 'none';
+            siftAlignStopBtn.style.display = 'block';
+
             window.parent.postMessage({
                 type: 'REQUEST_SIFT_ALIGN',
                 camera_state: cameraState,
+                timestamp: Date.now()
+            }, '*');
+        });
+
+        siftAlignStopBtn.addEventListener('click', () => {
+            window.parent.postMessage({
+                type: 'REQUEST_SIFT_ALIGN_STOP',
                 timestamp: Date.now()
             }, '*');
         });
@@ -1560,6 +1576,9 @@
                 const aspectRatio = event.data?.output_aspect_ratio;
                 updateOutputSettings(resolution, aspectRatio);
                 console.log('[GaussianViewer] Updated output settings:', outputSettings);
+            } else if (type === 'SIFT_ALIGN_FINISHED') {
+                siftAlignBtn.style.display = 'block';
+                siftAlignStopBtn.style.display = 'none';
             } else if (type) {
                 console.log('[GaussianViewer] Unhandled message type:', type);
             }

@@ -306,8 +306,9 @@ app.registerExtension({
                                 })
                             });
                             const result = await response.json();
-                            if (result.status === 'ok') {
-                                infoPanel.innerHTML = `<span style="color: #6cc;">✓ SIFT Align complete</span>`;
+                            if (result.status === 'ok' || result.status === 'stopped') {
+                                const statusText = result.status === 'ok' ? '✓ SIFT Align complete' : 'SIFT Align stopped';
+                                infoPanel.innerHTML = `<span style="color: #6cc;">${statusText}</span>`;
                                 if (result.camera_state) {
                                     iframe.contentWindow.postMessage({
                                         type: 'APPLY_CAMERA_STATE',
@@ -323,6 +324,16 @@ app.registerExtension({
                         } catch (error) {
                             console.error('[GeomPack Gaussian v2] SIFT Align failed:', error);
                             infoPanel.innerHTML = `<div style="color: #ff6b6b;">SIFT Align failed: ${error.message}</div>`;
+                        } finally {
+                            iframe.contentWindow.postMessage({ type: 'SIFT_ALIGN_FINISHED' }, '*');
+                        }
+                    }
+                    // Handle SIFT alignment stop request
+                    else if (event.data.type === 'REQUEST_SIFT_ALIGN_STOP') {
+                        try {
+                            await fetch('/geompack/sift_align_stop', { method: 'POST' });
+                        } catch (error) {
+                            console.error('[GeomPack Gaussian v2] Failed to stop SIFT Align:', error);
                         }
                     }
                     // Handle render results for Render node
@@ -356,6 +367,20 @@ app.registerExtension({
                         window.postMessage(payload, "*");
                     }
                 });
+
+                // Add listener for real-time alignment updates from backend
+                const onAlignUpdate = (event) => {
+                    const data = event.detail;
+                    if (data.ply_file === this.currentFilename || data.ply_file === this.currentPlyFile) {
+                        if (iframe.contentWindow && data.camera_state) {
+                            iframe.contentWindow.postMessage({
+                                type: 'APPLY_CAMERA_STATE',
+                                camera_state: data.camera_state
+                            }, '*');
+                        }
+                    }
+                };
+                api.addEventListener("geompack_sift_align_update", onAlignUpdate);
 
                 // Set initial node size
                 this.setSize([512, 580]);

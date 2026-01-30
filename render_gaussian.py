@@ -33,6 +33,9 @@ from .camera_params import (
     set_camera_state,
 )
 
+# Global flag for stopping SIFT alignment
+STOP_SIFT_ALIGNMENT = False
+
 
 class RenderGaussianNode:
     """
@@ -509,6 +512,9 @@ try:
 
     @PromptServer.instance.routes.post("/geompack/sift_align")
     async def geompack_sift_align(request):
+        global STOP_SIFT_ALIGNMENT
+        STOP_SIFT_ALIGNMENT = False # Reset stop flag
+
         print("=" * 80)
         print("[RenderGaussian] ===== SIFT_ALIGN REQUEST RECEIVED =====")
         print("=" * 80)
@@ -572,12 +578,23 @@ try:
 
             print("[RenderGaussian] SIFT alignment complete")
             return web.json_response({"status": "ok", "camera_state": final_state})
-
+        except StopIteration:
+            print("[RenderGaussian] SIFT alignment stopped by user")
+            # Return current state in cache as result
+            final_state = get_camera_state(ply_file) or get_camera_state(filename)
+            return web.json_response({"status": "stopped", "camera_state": final_state})
         except Exception as e:
             print(f"[RenderGaussian] SIFT alignment failed: {e}")
             import traceback
             traceback.print_exc()
             return web.json_response({"status": "error", "reason": str(e)}, status=500)
+
+    @PromptServer.instance.routes.post("/geompack/sift_align_stop")
+    async def geompack_sift_align_stop(request):
+        global STOP_SIFT_ALIGNMENT
+        print("[RenderGaussian] Request to stop SIFT alignment received")
+        STOP_SIFT_ALIGNMENT = True
+        return web.json_response({"status": "ok"})
 
 except Exception as e:
     print(f"[RenderGaussian] Failed to register render_result endpoint: {e}")

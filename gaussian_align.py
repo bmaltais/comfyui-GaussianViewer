@@ -14,6 +14,11 @@ from scipy.spatial.transform import Rotation as R
 from .render_gaussian import RenderGaussianNode
 from .camera_params import set_camera_state
 
+try:
+    from server import PromptServer
+except ImportError:
+    PromptServer = None
+
 class GaussianSIFTAlignNode(RenderGaussianNode):
     """
     Iteratively align Gaussian Splat camera parameters to a reference image using SIFT.
@@ -100,6 +105,11 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
             })
 
         def objective(p):
+            # Check for stop flag
+            from .render_gaussian import STOP_SIFT_ALIGNMENT
+            if STOP_SIFT_ALIGNMENT:
+                raise StopIteration
+
             # Convert p to camera state
             state = self._p_to_camera_state(p)
             # Merge with current state (for fx, fy, scale, etc.)
@@ -121,8 +131,28 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
                 print(f"[GaussianSIFTAlign] Iteration error: {e}")
                 return 1e6
 
+        def on_iteration(xk):
+            # Check for stop flag
+            from .render_gaussian import STOP_SIFT_ALIGNMENT
+            if STOP_SIFT_ALIGNMENT:
+                raise StopIteration
+
+            # Send current state to frontend for visual update
+            if PromptServer:
+                state = self._p_to_camera_state(xk)
+                full_state = current_state_dict.copy()
+                full_state.update(state)
+
+                # We need to provide enough info for the frontend to apply it
+                # PromptServer.instance.send works for all connected clients
+                PromptServer.instance.send("geompack_sift_align_update", {
+                    "ply_file": filename,
+                    "camera_state": full_state
+                })
+
         # Run optimization using Nelder-Mead (no gradients needed)
         res = minimize(objective, initial_p, method='Nelder-Mead',
+                       callback=on_iteration,
                        options={'maxiter': max_iterations, 'xatol': 1e-3, 'fatol': 1e-3})
 
         final_p = res.x
