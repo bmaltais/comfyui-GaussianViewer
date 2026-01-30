@@ -1462,8 +1462,25 @@
         document.getElementById('resetCamera').addEventListener('click', resetCamera);
         document.getElementById('setCamera').addEventListener('click', setCameraParams);
         document.getElementById('siftAlign').addEventListener('click', () => {
+            const target = getCameraTarget();
+            const cameraState = {
+                position: {
+                    x: camera.position.x,
+                    y: camera.position.y,
+                    z: camera.position.z
+                },
+                target: target ? { x: target.x, y: target.y, z: target.z } : null,
+                fx: camera.data?.fx || null,
+                fy: camera.data?.fy || null,
+                image_width: nativeImageWidth || canvas?.width || null,
+                image_height: nativeImageHeight || canvas?.height || null,
+                scale: currentScale || 1.0,
+                scale_compensation: gaussianScaleCompensation || null
+            };
+
             window.parent.postMessage({
                 type: 'REQUEST_SIFT_ALIGN',
+                camera_state: cameraState,
                 timestamp: Date.now()
             }, '*');
         });

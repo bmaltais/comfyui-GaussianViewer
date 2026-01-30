@@ -287,6 +287,9 @@ app.registerExtension({
                     else if (event.data.type === 'REQUEST_SIFT_ALIGN') {
                         const plyFile = this.currentPlyFile;
                         const filename = this.currentFilename;
+                        const overlayImage = this.currentOverlayImage;
+                        const cameraState = event.data.camera_state;
+
                         if (!plyFile) return;
 
                         infoPanel.innerHTML = `<span style="color: #ffcc00;">Aligning via SIFT...</span>`;
@@ -297,7 +300,9 @@ app.registerExtension({
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                     ply_file: plyFile,
-                                    filename: filename
+                                    filename: filename,
+                                    overlay_image: overlayImage,
+                                    camera_state: cameraState
                                 })
                             });
                             const result = await response.json();

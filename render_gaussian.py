@@ -515,16 +515,22 @@ try:
         data = await request.json()
         ply_file = data.get("ply_file")
         filename = data.get("filename")
+        camera_state = data.get("camera_state")
+        overlay_filename = data.get("overlay_image")
 
         if not ply_file:
             return web.json_response({"status": "error", "reason": "missing ply_file"}, status=400)
 
-        # Get current state to find overlay image
-        camera_state = get_camera_state(ply_file) or get_camera_state(filename)
+        # Fallback to cache if not provided
         if not camera_state:
-             return web.json_response({"status": "error", "reason": "No camera state found. Please run Set Camera once."}, status=400)
+            camera_state = get_camera_state(ply_file) or get_camera_state(filename)
 
-        overlay_filename = camera_state.get("overlay_image")
+        if not camera_state:
+             return web.json_response({"status": "error", "reason": "No camera state provided or found in cache."}, status=400)
+
+        if not overlay_filename:
+            overlay_filename = camera_state.get("overlay_image")
+
         if not overlay_filename:
             return web.json_response({"status": "error", "reason": "No reference image found. Please provide an 'image' input to GaussianViewer."}, status=400)
 
@@ -551,6 +557,13 @@ try:
             # Note: gaussian_sift_align is a synchronous method that waits for renders
             # Since we are in an async handler, this might block the loop, but it's acceptable for this task
             # unless it takes too long.
+
+            # Temporarily set camera state in cache so gaussian_sift_align can find it
+            # if we didn't get one from cache initially.
+            for key in (ply_file, filename):
+                if key:
+                    set_camera_state(key, camera_state)
+
             _, _, _, final_state = aligner.gaussian_sift_align(
                 ply_path=full_ply_path,
                 reference_image=ref_tensor,
