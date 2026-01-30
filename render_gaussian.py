@@ -89,7 +89,7 @@ class RenderGaussianNode:
         print(f"[RenderGaussian] IS_CHANGED: camera_version={camera_version}, camera_state={'yes' if camera_state else 'no'}")
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
-    def render_gaussian(self, ply_path: str, extrinsics=None, intrinsics=None):
+    def render_gaussian(self, ply_path: str, extrinsics=None, intrinsics=None, forced_camera_state=None):
         """
         Execute rendering and return image tensor.
         """
@@ -134,7 +134,11 @@ class RenderGaussianNode:
         print(f"[RenderGaussian] Generated request ID: {request_id}")
 
         # Look up camera state
-        camera_state = self._lookup_camera_state(ply_path, relative_path, filename)
+        if forced_camera_state is not None:
+            camera_state = forced_camera_state
+        else:
+            camera_state = self._lookup_camera_state(ply_path, relative_path, filename)
+
         print(f"[RenderGaussian] Camera state lookup:")
         print(f"  Found camera_state: {camera_state is not None}")
         if camera_state:
@@ -502,6 +506,65 @@ try:
         print(f"[RenderGaussian] ===== PREVIEW_CAMERA REQUEST COMPLETE =====")
         print("=" * 80)
         return web.json_response({"status": "ok"})
+
+    @PromptServer.instance.routes.post("/geompack/sift_align")
+    async def geompack_sift_align(request):
+        print("=" * 80)
+        print("[RenderGaussian] ===== SIFT_ALIGN REQUEST RECEIVED =====")
+        print("=" * 80)
+        data = await request.json()
+        ply_file = data.get("ply_file")
+        filename = data.get("filename")
+
+        if not ply_file:
+            return web.json_response({"status": "error", "reason": "missing ply_file"}, status=400)
+
+        # Get current state to find overlay image
+        camera_state = get_camera_state(ply_file) or get_camera_state(filename)
+        if not camera_state:
+             return web.json_response({"status": "error", "reason": "No camera state found. Please run Set Camera once."}, status=400)
+
+        overlay_filename = camera_state.get("overlay_image")
+        if not overlay_filename:
+            return web.json_response({"status": "error", "reason": "No reference image found. Please provide an 'image' input to GaussianViewer."}, status=400)
+
+        # Load the overlay image
+        overlay_path = os.path.join(COMFYUI_OUTPUT_FOLDER, overlay_filename)
+        if not os.path.exists(overlay_path):
+            return web.json_response({"status": "error", "reason": f"Reference image not found at {overlay_path}"}, status=400)
+
+        try:
+            from .gaussian_align import GaussianSIFTAlignNode
+            aligner = GaussianSIFTAlignNode()
+
+            # Load overlay as tensor
+            ref_img = Image.open(overlay_path).convert("RGB")
+            ref_np = np.array(ref_img).astype(np.float32) / 255.0
+            ref_tensor = torch.from_numpy(ref_np).unsqueeze(0)
+
+            # Resolve full PLY path
+            full_ply_path = ply_file
+            if not os.path.isabs(full_ply_path) and COMFYUI_OUTPUT_FOLDER:
+                full_ply_path = os.path.join(COMFYUI_OUTPUT_FOLDER, ply_file)
+
+            # Run alignment
+            # Note: gaussian_sift_align is a synchronous method that waits for renders
+            # Since we are in an async handler, this might block the loop, but it's acceptable for this task
+            # unless it takes too long.
+            _, _, _, final_state = aligner.gaussian_sift_align(
+                ply_path=full_ply_path,
+                reference_image=ref_tensor,
+                max_iterations=50 # Reasonable default for UI trigger
+            )
+
+            print("[RenderGaussian] SIFT alignment complete")
+            return web.json_response({"status": "ok", "camera_state": final_state})
+
+        except Exception as e:
+            print(f"[RenderGaussian] SIFT alignment failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return web.json_response({"status": "error", "reason": str(e)}, status=500)
 
 except Exception as e:
     print(f"[RenderGaussian] Failed to register render_result endpoint: {e}")

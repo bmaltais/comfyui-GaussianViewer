@@ -283,6 +283,43 @@ app.registerExtension({
                             infoPanel.innerHTML = `<div style="color: #ff6b6b;">Error saving camera: ${error.message}</div>`;
                         }
                     }
+                    // Handle SIFT alignment request
+                    else if (event.data.type === 'REQUEST_SIFT_ALIGN') {
+                        const plyFile = this.currentPlyFile;
+                        const filename = this.currentFilename;
+                        if (!plyFile) return;
+
+                        infoPanel.innerHTML = `<span style="color: #ffcc00;">Aligning via SIFT...</span>`;
+
+                        try {
+                            const response = await fetch('/geompack/sift_align', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    ply_file: plyFile,
+                                    filename: filename
+                                })
+                            });
+                            const result = await response.json();
+                            if (result.status === 'ok') {
+                                infoPanel.innerHTML = `<span style="color: #6cc;">✓ SIFT Align complete</span>`;
+                                if (result.camera_state) {
+                                    iframe.contentWindow.postMessage({
+                                        type: 'APPLY_CAMERA_STATE',
+                                        camera_state: result.camera_state
+                                    }, '*');
+                                }
+                                setTimeout(() => {
+                                    infoPanel.innerHTML = '<span style="color: #888;">Gaussian splat info will appear here after execution</span>';
+                                }, 3000);
+                            } else {
+                                throw new Error(result.reason || 'Unknown error');
+                            }
+                        } catch (error) {
+                            console.error('[GeomPack Gaussian v2] SIFT Align failed:', error);
+                            infoPanel.innerHTML = `<div style="color: #ff6b6b;">SIFT Align failed: ${error.message}</div>`;
+                        }
+                    }
                     // Handle render results for Render node
                     else if (event.data.type === 'RENDER_RESULT' && event.data.request_id && event.data.image) {
                         const payload = {
@@ -368,6 +405,7 @@ app.registerExtension({
                         // Store current file info for camera param saving
                         this.currentPlyFile = filename;
                         this.currentFilename = uiData.filename?.[0] || filename;
+                        this.currentOverlayImage = uiData.overlay_image?.[0] || null;
                         window.GEOMPACK_PREVIEW_IFRAMES[this.currentPlyFile] = iframe;
                         window.GEOMPACK_PREVIEW_IFRAMES[this.currentFilename] = iframe;
 
