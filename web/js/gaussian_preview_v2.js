@@ -357,52 +357,39 @@ app.registerExtension({
 
                         // Function to fetch and send data to iframe
                         const fetchAndSend = async (meshInfo = null) => {
-                            const info = meshInfo || {
-                                filename,
-                                extrinsics,
-                                intrinsics,
-                                overlay_image
-                            };
-                            if (!iframe.contentWindow) {
-                                console.error("[GeomPack Gaussian v2] Iframe contentWindow not available");
-                                return;
-                            }
+                            const info = meshInfo || { filename, extrinsics, intrinsics, overlay_image, ply_file_b: uiData.ply_file_b?.[0] };
+                            if (!iframe.contentWindow) return;
 
-                            try {
-                                // Fetch the PLY file from parent context (authenticated)
-                                const targetFilename = info.filename || filename;
-                                const targetExtrinsics = info.extrinsics || extrinsics;
-                                const targetIntrinsics = info.intrinsics || intrinsics;
-                                const targetOverlayImage = info.overlay_image || overlay_image;
-                                const targetPath = `/view?filename=${encodeURIComponent(targetFilename)}&type=output&subfolder=`;
-
-                                console.log("[GeomPack Gaussian v2] Fetching PLY file:", targetPath);
-                                const response = await fetch(targetPath);
-                                if (!response.ok) {
-                                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                            const loadSlot = async (fname, slot) => {
+                                if (!fname) return;
+                                try {
+                                    const targetPath = `/view?filename=${encodeURIComponent(fname)}&type=output&subfolder=`;
+                                    const response = await fetch(targetPath);
+                                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                                    const arrayBuffer = await response.arrayBuffer();
+                                    iframe.contentWindow.postMessage({
+                                        type: "LOAD_MESH_DATA",
+                                        data: arrayBuffer,
+                                        filename: fname,
+                                        slot: slot,
+                                        extrinsics: slot === 'A' ? (info.extrinsics || extrinsics) : null,
+                                        intrinsics: slot === 'A' ? (info.intrinsics || intrinsics) : null,
+                                        overlay_image: slot === 'A' ? (info.overlay_image || overlay_image) : null,
+                                        timestamp: Date.now()
+                                    }, "*", [arrayBuffer]);
+                                } catch (error) {
+                                    console.error(`[GeomPack Gaussian v2] Error loading slot ${slot}:`, error);
                                 }
-                                const arrayBuffer = await response.arrayBuffer();
-                                console.log("[GeomPack Gaussian v2] Fetched PLY file, size:", arrayBuffer.byteLength);
+                            };
 
-                                // Send the data to iframe with camera parameters
-                                iframe.contentWindow.postMessage({
-                                    type: "LOAD_MESH_DATA",
-                                    data: arrayBuffer,
-                                    filename: targetFilename,
-                                    extrinsics: targetExtrinsics,
-                                    intrinsics: targetIntrinsics,
-                                    overlay_image: targetOverlayImage,
-                                    timestamp: Date.now()
-                                }, "*", [arrayBuffer]);
-                            } catch (error) {
-                                console.error("[GeomPack Gaussian v2] Error fetching PLY:", error);
-                                infoPanel.innerHTML = `<div style="color: #ff6b6b;">Error loading PLY: ${error.message}</div>`;
+                            await loadSlot(info.filename || filename, 'A');
+                            if (info.ply_file_b || uiData.ply_file_b?.[0]) {
+                                await loadSlot(info.ply_file_b || uiData.ply_file_b?.[0], 'B');
                             }
                         };
                         this.fetchAndSend = fetchAndSend;
 
-                        // Fetch and send when iframe is ready
-                        const meshInfo = { filename, extrinsics, intrinsics, overlay_image };
+                        const meshInfo = { filename, extrinsics, intrinsics, overlay_image, ply_file_b: uiData.ply_file_b?.[0] };
                         this.pendingMeshInfo = meshInfo;
                         if (iframeLoaded) {
                             fetchAndSend(meshInfo);

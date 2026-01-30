@@ -31,6 +31,10 @@ class GaussianViewerNode(RenderGaussianNode):
                 }),
             },
             "optional": {
+                "ply_path_b": ("STRING", {
+                    "forceInput": True,
+                    "tooltip": "Optional second PLY file for 3D-3D alignment"
+                }),
                 "extrinsics": ("EXTRINSICS", {
                     "tooltip": "4x4 camera extrinsics matrix for initial view"
                 }),
@@ -49,7 +53,7 @@ class GaussianViewerNode(RenderGaussianNode):
     FUNCTION = "gaussian_viewer"
     CATEGORY = "geompack/visualization"
 
-    def gaussian_viewer(self, ply_path: str, extrinsics=None, intrinsics=None, image=None):
+    def gaussian_viewer(self, ply_path: str, ply_path_b: str = None, extrinsics=None, intrinsics=None, image=None):
         """
         Preview the PLY in the viewer and return the rendered IMAGE output.
         """
@@ -58,6 +62,7 @@ class GaussianViewerNode(RenderGaussianNode):
         print("=" * 80)
         print("[GaussianViewer] Input parameters:")
         print(f"  ply_path: {ply_path}")
+        print(f"  ply_path_b: {ply_path_b}")
         print(f"  extrinsics: {extrinsics is not None}")
         print(f"  intrinsics: {intrinsics is not None}")
 
@@ -91,6 +96,17 @@ class GaussianViewerNode(RenderGaussianNode):
             "filename": [filename],
             "file_size_mb": [round(file_size_mb, 2)],
         }
+
+        if ply_path_b and os.path.exists(ply_path_b):
+            filename_b = os.path.basename(ply_path_b)
+            if COMFYUI_OUTPUT_FOLDER and ply_path_b.startswith(COMFYUI_OUTPUT_FOLDER):
+                rel_b = os.path.relpath(ply_path_b, COMFYUI_OUTPUT_FOLDER)
+            else:
+                rel_b = filename_b
+
+            ui_data["ply_file_b"] = [rel_b]
+            ui_data["filename_b"] = [filename_b]
+            print(f"[GaussianViewer] Second PLY provided: {filename_b}")
 
         if extrinsics is not None:
             ui_data["extrinsics"] = [extrinsics]

@@ -181,7 +181,7 @@
             border: 1px solid #444;
             border-radius: 6px;
             padding: 10px;
-            width: 220px;
+            width: 240px;
             z-index: 100;
             color: #eee;
             font-size: 11px;
@@ -238,6 +238,12 @@
 
         .svg-marker-2d {
             fill: #ff0;
+            stroke: #000;
+            stroke-width: 1;
+        }
+
+        .svg-marker-3d-b {
+            fill: #f0f;
             stroke: #000;
             stroke-width: 1;
         }
@@ -344,7 +350,11 @@
 
         <div id="alignmentPanel" class="alignment-panel hidden">
             <h3>Alignment Tool</h3>
-            <p style="font-size: 9px; color: #888; margin-bottom: 6px;">1. Click "Add Pair"<br>2. Click point on image (2D)<br>3. Click same point on splat (3D)</p>
+            <div class="btn-group" style="margin-bottom: 8px;">
+                <button id="btnMode2D" class="active">2D-3D</button>
+                <button id="btnMode3D">3D-3D</button>
+            </div>
+            <p id="alignInstructions" style="font-size: 9px; color: #888; margin-bottom: 6px;">1. Click "Add Pair"<br>2. Click point on image (2D)<br>3. Click same point on splat (3D)</p>
             <div id="pointList" class="point-list"></div>
             <div class="btn-group">
                 <button id="btnAddPair">Add Pair</button>
@@ -357,7 +367,8 @@
                 </label>
             </div>
             <button id="btnRunAlign" class="btn-primary" disabled style="margin-bottom: 4px;">Run Alignment</button>
-            <button id="btnAutoRefine" class="btn-primary" style="background: #26a;">Auto Refine</button>
+            <button id="btnAutoRefine" class="btn-primary" style="background: #26a; margin-bottom: 4px;">Auto Refine</button>
+            <button id="btnAutoMatch3D" class="btn-primary" style="background: #a62; display: none;">Auto-Match (ICP)</button>
             <div id="alignStatus" style="margin-top: 6px; font-size: 9px; color: #aaa; text-align: center;"></div>
         </div>
 
@@ -378,9 +389,15 @@
     </div>
 
     <div id="controlsBar">
-        <div class="scale-control">
-            <span>Scale:</span>
-            <input type="number" id="gaussianScaleValue" min="0.01" max="100" step="0.1" value="1.0" title="Gaussian scale multiplier">
+        <div id="splatAControls" class="scale-control">
+            <span>Scale A:</span>
+            <input type="number" id="gaussianScaleValue" min="0.01" max="100" step="0.1" value="1.0" title="Splat A scale multiplier">
+            <input type="range" id="splatAAlpha" min="0" max="1" step="0.01" value="1.0" title="Splat A opacity" style="width: 50px;">
+        </div>
+        <div id="splatBControls" class="scale-control" style="display: none;">
+            <span>Scale B:</span>
+            <input type="number" id="gaussianScaleValueB" min="0.01" max="100" step="0.1" value="1.0" title="Splat B scale multiplier">
+            <input type="range" id="splatBAlpha" min="0" max="1" step="0.01" value="1.0" title="Splat B opacity" style="width: 50px;">
         </div>
         <button id="resetCamera" title="Reset camera view">Reset View</button>
         <div class="scale-control">
@@ -419,9 +436,12 @@
         let renderer = null;
         let controls = null;
         let animationId = null;
-        let currentSplat = null;
-        let originalScales = null;  // Store original scales for dynamic adjustment
-        let cachedSplatData = null; // Keep a copy of buffers to reattach after worker detaches
+        let splatA = null;
+        let splatB = null;
+        let originalScalesA = null;
+        let originalScalesB = null;
+        let cachedSplatDataA = null;
+        let cachedSplatDataB = null;
         let baseFocalLength = null;
         let baseFocalY = null;
         let nativeAspect = null;
@@ -432,8 +452,9 @@
         let lastSceneSize = null;
 
         // Alignment state
-        let alignmentPoints = []; // { id, p2d: {x, y}, p3d: {x, y, z} }
-        let currentPickingState = null; // '2D' or '3D'
+        let alignmentPoints = []; // { id, p2d: {x, y}, p3d: {x, y, z}, p3dB: {x, y, z} }
+        let alignmentMode = '2D-3D';
+        let currentPickingState = null; // '2D', '3D', '3D-A', '3D-B'
         let currentPairId = null;
         let overlayPixelData = null;
         let overlayWidth = 0;
@@ -814,22 +835,27 @@
             return `${filename || "unknown"}::${intrinsicKey}`;
         }
 
-        async function loadPLYFromData(arrayBuffer, filename, extrinsics, intrinsics) {
+        async function loadPLYFromData(arrayBuffer, filename, extrinsics, intrinsics, slot = 'A') {
             try {
-                const meshSignature = buildMeshSignature(filename, intrinsics);
-                const isNewMesh = meshSignature !== lastMeshSignature;
-                if (isNewMesh) {
-                    initialCameraData = null;
-                    baseFocalLength = null;
-                    baseFocalY = null;
-                    nativeImageWidth = null;
-                    nativeImageHeight = null;
-                    cachedSplatData = null;
-                    lastMeshSignature = meshSignature;
-                    currentScale = 1.0;
-                    if (scaleInput) {
-                        scaleInput.value = 1.0;
+                if (slot === 'A') {
+                    const meshSignature = buildMeshSignature(filename, intrinsics);
+                    const isNewMesh = meshSignature !== lastMeshSignature;
+                    if (isNewMesh) {
+                        initialCameraData = null;
+                        baseFocalLength = null;
+                        baseFocalY = null;
+                        nativeImageWidth = null;
+                        nativeImageHeight = null;
+                        cachedSplatDataA = null;
+                        lastMeshSignature = meshSignature;
+                        currentScale = 1.0;
+                        if (scaleInput) {
+                            scaleInput.value = 1.0;
+                        }
                     }
+                } else {
+                    cachedSplatDataB = null;
+                    document.getElementById('splatBControls').style.display = 'flex';
                 }
 
                 const hasIntrinsics = Array.isArray(intrinsics) && intrinsics.length >= 2;
@@ -847,15 +873,16 @@
                     updateCanvasDisplaySize();
                 }
                 
-                // Clear ALL existing objects from scene
-                if (scene.objects && scene.objects.length > 0) {
-                    console.log('[GaussianViewer] Clearing', scene.objects.length, 'existing objects from scene');
-                    // Remove all objects (iterate backwards to avoid index issues)
+                // If loading into A, clear everything first (reset behavior)
+                if (slot === 'A' && scene.objects && scene.objects.length > 0) {
+                    console.log('[GaussianViewer] Clearing existing objects for slot A reload');
                     while (scene.objects.length > 0) {
                         scene.removeObject(scene.objects[0]);
                     }
+                    splatA = null;
+                    splatB = null;
+                    document.getElementById('splatBControls').style.display = 'none';
                 }
-                currentSplat = null;
 
                 // Pre-calculate scale compensation from intrinsics BEFORE loading
                 // This ensures gaussian scales are correct from the start
@@ -896,79 +923,44 @@
 
                 // Get the loaded splat (last object in scene)
                 if (scene.objects && scene.objects.length > 0) {
-                    currentSplat = scene.objects[scene.objects.length - 1];
+                    const loadedSplat = scene.objects[scene.objects.length - 1];
+                    if (slot === 'A') {
+                        splatA = loadedSplat;
+                    } else {
+                        splatB = loadedSplat;
+                    }
 
                     // Log bounds info for debugging
-                    if (currentSplat.bounds) {
-                        const center = currentSplat.bounds.center();
-                        const size = currentSplat.bounds.size();
-                        console.log('[GaussianViewer] Scene bounds center:', center.x, center.y, center.z);
-                        console.log('[GaussianViewer] Scene bounds size:', size.x, size.y, size.z);
+                    if (loadedSplat.bounds) {
+                        const center = loadedSplat.bounds.center();
+                        const size = loadedSplat.bounds.size();
+                        console.log(`[GaussianViewer] Splat ${slot} bounds center:`, center.x, center.y, center.z);
                     }
 
-                    // Cache original splat buffers so we can reattach after worker detaches
-                    if (currentSplat.data && currentSplat.data.positions && currentSplat.data.rotations && currentSplat.data.colors && currentSplat.data.selection) {
-                        cachedSplatData = {
-                            positions: new Float32Array(currentSplat.data.positions),
-                            rotations: new Float32Array(currentSplat.data.rotations),
-                            colors: new Uint8Array(currentSplat.data.colors),
-                            selection: new Uint8Array(currentSplat.data.selection)
+                    // Cache original splat buffers
+                    if (loadedSplat.data && loadedSplat.data.positions && loadedSplat.data.rotations && loadedSplat.data.colors && loadedSplat.data.selection) {
+                        const cache = {
+                            positions: new Float32Array(loadedSplat.data.positions),
+                            rotations: new Float32Array(loadedSplat.data.rotations),
+                            colors: new Uint8Array(loadedSplat.data.colors),
+                            selection: new Uint8Array(loadedSplat.data.selection)
                         };
-                    } else {
-                        cachedSplatData = null;
+                        if (slot === 'A') cachedSplatDataA = cache; else cachedSplatDataB = cache;
                     }
 
-                    // Store original scales and log statistics
-                    if (currentSplat.data && currentSplat.data.scales) {
-                        const scales = currentSplat.data.scales;
-                        const numGaussians = scales.length / 3;
-                        let minScale = Infinity, maxScale = -Infinity, sumScale = 0;
-
-                        // Store a copy of original scales (BEFORE compensation) for dynamic adjustment
-                        // The stored scales include the compensation factor so user scale=1 shows correct size
-                        originalScales = new Float32Array(scales.length);
+                    // Store original scales
+                    if (loadedSplat.data && loadedSplat.data.scales) {
+                        const scales = loadedSplat.data.scales;
+                        const origScales = new Float32Array(scales.length);
                         for (let i = 0; i < scales.length; i++) {
-                            // Apply compensation: gaussians need to be larger when focal length is scaled down
-                            originalScales[i] = scales[i] * gaussianScaleCompensation;
+                            origScales[i] = scales[i] * gaussianScaleCompensation;
                         }
-                        console.log('[GaussianViewer] Stored compensated scales (factor:', gaussianScaleCompensation.toFixed(2), 'x)');
-
-                        // Apply compensated scales immediately
-                        for (let i = 0; i < scales.length; i++) {
-                            scales[i] = originalScales[i];
-                        }
-
-                        // Mark data as changed so gsplat.js re-uploads to GPU
-                        currentSplat.data.changed = true;
+                        if (slot === 'A') originalScalesA = origScales; else originalScalesB = origScales;
 
                         for (let i = 0; i < scales.length; i++) {
-                            const s = scales[i];
-                            minScale = Math.min(minScale, s);
-                            maxScale = Math.max(maxScale, s);
-                            sumScale += s;
+                            scales[i] = origScales[i];
                         }
-
-                        const avgScale = sumScale / scales.length;
-                        console.log('[GaussianViewer] === GAUSSIAN SCALE DEBUG (after compensation) ===');
-                        console.log('[GaussianViewer] Number of Gaussians:', numGaussians);
-                        console.log('[GaussianViewer] Compensated scale min:', minScale.toFixed(6));
-                        console.log('[GaussianViewer] Compensated scale max:', maxScale.toFixed(6));
-                        console.log('[GaussianViewer] Compensated scale avg:', avgScale.toFixed(6));
-                        console.log('[GaussianViewer] =================================================');
-                    } else {
-                        console.log('[GaussianViewer] No scales data found on splat object');
-                        console.log('[GaussianViewer] Splat properties:', Object.keys(currentSplat));
-                        if (currentSplat.data) {
-                            console.log('[GaussianViewer] Splat.data properties:', Object.keys(currentSplat.data));
-                        }
-                        originalScales = null;
-                    }
-
-                    // Reapply current scale (preserve across re-runs for same mesh)
-                    if (currentScale !== 1.0) {
-                        updateGaussianScale(currentScale);
-                    } else if (scaleInput) {
-                        scaleInput.value = 1.0;
+                        loadedSplat.data.changed = true;
                     }
                 }
 
@@ -1416,124 +1408,86 @@
         let scaleUpdatePending = false;
         let lastScaleValue = 1.0;
 
-        function updateGaussianScale(newScale) {
+        function updateGaussianScale(newScale, slot = 'A') {
             newScale = Math.max(0.01, Math.min(100, parseFloat(newScale) || 1.0));
-            currentScale = newScale;
+            if (slot === 'A') currentScale = newScale;
 
-            // Update input
-            scaleInput.value = newScale;
+            const targetSplat = slot === 'A' ? splatA : splatB;
+            const originalScales = slot === 'A' ? originalScalesA : originalScalesB;
+            const cachedSplatData = slot === 'A' ? cachedSplatDataA : cachedSplatDataB;
 
-            // Apply scale to current splat by modifying the underlying scale data
-            // gsplat.js applies Math.exp() during PLY loading, so data.scales contains LINEAR values
-            // To multiply visual size by factor f, we multiply the scale values directly
-            if (currentSplat && currentSplat.data && currentSplat.data.scales && originalScales) {
-                console.log('[GaussianViewer] Updating gaussian scales with factor:', newScale);
-
-                const data = currentSplat.data;
+            if (targetSplat && targetSplat.data && targetSplat.data.scales && originalScales) {
+                const data = targetSplat.data;
                 let scales = data.scales;
                 const detached = data.detached || !scales || scales.buffer.byteLength === 0;
 
                 if (detached) {
-                    if (!cachedSplatData) {
-                        console.warn('[GaussianViewer] Cannot reattach splat data - cached buffers missing');
-                        return;
-                    }
+                    if (!cachedSplatData) return;
                     const newScales = new Float32Array(originalScales.length);
-                    for (let i = 0; i < newScales.length; i++) {
-                        newScales[i] = originalScales[i] * newScale;
-                    }
-                    const positions = new Float32Array(cachedSplatData.positions);
-                    const rotations = new Float32Array(cachedSplatData.rotations);
-                    const colors = new Uint8Array(cachedSplatData.colors);
-                    const selection = new Uint8Array(cachedSplatData.selection);
+                    for (let i = 0; i < newScales.length; i++) newScales[i] = originalScales[i] * newScale;
                     data.reattach(
-                        positions.buffer,
-                        rotations.buffer,
+                        new Float32Array(cachedSplatData.positions).buffer,
+                        new Float32Array(cachedSplatData.rotations).buffer,
                         newScales.buffer,
-                        colors.buffer,
-                        selection.buffer
+                        new Uint8Array(cachedSplatData.colors).buffer,
+                        new Uint8Array(cachedSplatData.selection).buffer
                     );
-                    scales = data.scales;
                 } else {
-                    // Apply scale factor by multiplying (scales are in linear space)
-                    for (let i = 0; i < scales.length; i++) {
-                        scales[i] = originalScales[i] * newScale;
-                    }
+                    for (let i = 0; i < scales.length; i++) scales[i] = originalScales[i] * newScale;
                 }
-
-                // Mark data as changed to trigger GPU re-upload
-                // gsplat.js checks data.changed and data.detached
                 data.changed = true;
                 data.detached = false;
-                console.log('[GaussianViewer] Set data.changed=true, data.detached=false');
 
-                // Get the render data (could be _renderData or renderData)
                 const renderData = renderer._renderData || renderer.renderData;
-                if (renderData) {
-                    console.log('[GaussianViewer] Found renderData, keys:', Object.keys(renderData).join(', '));
+                if (renderData && renderData.markDirty) renderData.markDirty(targetSplat);
 
-                    // Mark the splat as dirty
-                    if (renderData.markDirty) {
-                        renderData.markDirty(currentSplat);
-                        console.log('[GaussianViewer] Called markDirty()');
-                    }
-
-                    // Try forcing the flags directly
-                    renderData.dataChanged = true;
-                    console.log('[GaussianViewer] Set renderData.dataChanged = true');
-
-                    // Check needsRebuild status
-                    console.log('[GaussianViewer] renderData.needsRebuild:', renderData.needsRebuild);
-                    console.log('[GaussianViewer] renderData._updating size:', renderData._updating?.size);
-                    console.log('[GaussianViewer] renderData._dirty size:', renderData._dirty?.size);
-                } else {
-                    console.log('[GaussianViewer] No renderData found on renderer');
-                    console.log('[GaussianViewer] renderer keys:', Object.keys(renderer).join(', '));
-                }
-
-                // Also dispatch change event (triggers scene to pick up changes)
-                if (currentSplat.dispatchEvent && currentSplat._changeEvent) {
-                    currentSplat.dispatchEvent(currentSplat._changeEvent);
-                    console.log('[GaussianViewer] Dispatched change event');
-                }
-
-                // Throttled force refresh by removing and re-adding the splat to scene
-                // This is a workaround for gsplat.js not supporting dynamic scale updates
                 if (scene && scene.removeObject && scene.addObject) {
-                    lastScaleValue = newScale;  // Always update to latest value
+                    setTimeout(() => {
+                        scene.removeObject(targetSplat);
+                        scene.addObject(targetSplat);
+                    }, 10);
+                }
+            }
+        }
 
-                    if (!scaleUpdatePending) {
-                        scaleUpdatePending = true;
-                        const splatToRefresh = currentSplat;  // Capture reference
+        function updateGaussianOpacity(value, slot = 'A') {
+            const opacity = Math.max(0, Math.min(1, parseFloat(value) || 1.0));
+            const targetSplat = slot === 'A' ? splatA : splatB;
+            const cachedSplatData = slot === 'A' ? cachedSplatDataA : cachedSplatDataB;
+            const originalScales = slot === 'A' ? originalScalesA : originalScalesB;
 
-                        // Delay the refresh to avoid flickering during slider drag
-                        setTimeout(() => {
-                            scaleUpdatePending = false;
+            if (targetSplat && targetSplat.data && cachedSplatData) {
+                const data = targetSplat.data;
+                const colors = data.colors;
+                const detached = data.detached || !colors || colors.buffer.byteLength === 0;
 
-                            // Only refresh if splat is still current
-                            if (splatToRefresh === currentSplat) {
-                                console.log('[GaussianViewer] Forcing refresh by re-adding splat to scene');
-                                scene.removeObject(splatToRefresh);
-                                scene.addObject(splatToRefresh);
-                                console.log('[GaussianViewer] Splat re-added to scene');
-                            } else {
-                                console.log('[GaussianViewer] Skipping refresh, splat changed during delay');
-                            }
-                        }, 150); // 150ms debounce for smoother dragging
-                    }
+                const newColors = new Uint8Array(cachedSplatData.colors.length);
+                for (let i = 0; i < cachedSplatData.colors.length; i += 4) {
+                    newColors[i] = cachedSplatData.colors[i];
+                    newColors[i+1] = cachedSplatData.colors[i+1];
+                    newColors[i+2] = cachedSplatData.colors[i+2];
+                    newColors[i+3] = Math.round(cachedSplatData.colors[i+3] * opacity);
                 }
 
-                if (scales.length > 0 && originalScales.length > 0) {
-                    console.log('[GaussianViewer] Scale update complete. New scale[0]:', scales[0].toFixed(6),
-                                'original[0]:', originalScales[0].toFixed(6), 'multiplier:', newScale);
+                if (detached) {
+                    data.reattach(
+                        new Float32Array(cachedSplatData.positions).buffer,
+                        new Float32Array(cachedSplatData.rotations).buffer,
+                        new Float32Array(originalScales).buffer,
+                        newColors.buffer,
+                        new Uint8Array(cachedSplatData.selection).buffer
+                    );
                 } else {
-                    console.log('[GaussianViewer] Scale update complete. Empty scales array.');
+                    for (let i = 0; i < colors.length; i++) colors[i] = newColors[i];
                 }
-            } else if (currentSplat) {
-                console.log('[GaussianViewer] Cannot update scales - missing data or originalScales');
-                console.log('[GaussianViewer] currentSplat.data:', !!currentSplat.data);
-                console.log('[GaussianViewer] currentSplat.data.scales:', !!(currentSplat.data && currentSplat.data.scales));
-                console.log('[GaussianViewer] originalScales:', !!originalScales);
+                data.changed = true;
+
+                if (scene && scene.removeObject && scene.addObject) {
+                    setTimeout(() => {
+                        scene.removeObject(targetSplat);
+                        scene.addObject(targetSplat);
+                    }, 10);
+                }
             }
         }
 
@@ -1626,8 +1580,9 @@
         }
 
         // Point Picking and Alignment Logic
-        function pick3DPoint(mouseX, mouseY, targetColor = null) {
-            if (!camera || !currentSplat || !currentSplat.data || !currentSplat.data.positions) return null;
+        function pick3DPoint(mouseX, mouseY, targetColor = null, slot = 'A') {
+            const targetSplat = slot === 'A' ? splatA : splatB;
+            if (!camera || !targetSplat || !targetSplat.data || !targetSplat.data.positions) return null;
 
             const rect = canvas.getBoundingClientRect();
             const x = ((mouseX - rect.left) / rect.width) * 2 - 1;
@@ -1636,8 +1591,8 @@
             const ray = camera.screenPointToRay(x, y);
             const pos = camera.position;
 
-            const positions = currentSplat.data.positions;
-            const colors = currentSplat.data.colors;
+            const positions = targetSplat.data.positions;
+            const colors = targetSplat.data.colors;
             const count = positions.length / 3;
             const hasColors = colors && colors.length >= count * 3;
 
@@ -1720,13 +1675,28 @@
 
             // Show manual alignment points
             alignmentPoints.forEach((pair, index) => {
-                if (pair.p2d) {
-                    createSvgMarker(layer, pair.p2d.x * w, pair.p2d.y * h, `${index+1}`, 'svg-marker-2d');
-                }
-                if (pair.p3d) {
-                    const screenPos = projectToScreen(pair.p3d);
-                    if (screenPos) {
-                        createSvgMarker(layer, screenPos.x * w, screenPos.y * h, `${index+1}`, 'svg-marker-3d');
+                if (alignmentMode === '2D-3D') {
+                    if (pair.p2d) {
+                        createSvgMarker(layer, pair.p2d.x * w, pair.p2d.y * h, `${index+1}`, 'svg-marker-2d');
+                    }
+                    if (pair.p3d) {
+                        const screenPos = projectToScreen(pair.p3d);
+                        if (screenPos) {
+                            createSvgMarker(layer, screenPos.x * w, screenPos.y * h, `${index+1}`, 'svg-marker-3d');
+                        }
+                    }
+                } else {
+                    if (pair.p3d) {
+                        const screenPos = projectToScreen(pair.p3d);
+                        if (screenPos) {
+                            createSvgMarker(layer, screenPos.x * w, screenPos.y * h, `${index+1}A`, 'svg-marker-3d');
+                        }
+                    }
+                    if (pair.p3dB) {
+                        const screenPos = projectToScreen(pair.p3dB);
+                        if (screenPos) {
+                            createSvgMarker(layer, screenPos.x * w, screenPos.y * h, `${index+1}B`, 'svg-marker-3d-b');
+                        }
                     }
                 }
             });
@@ -1773,15 +1743,25 @@
             alignmentPoints.forEach((pair, index) => {
                 const item = document.createElement('div');
                 item.className = 'point-item';
+                let status = '';
+                if (alignmentMode === '2D-3D') {
+                    status = `${pair.p2d ? '2D✓' : '2D?'} ${pair.p3d ? '3D✓' : '3D?'}`;
+                } else {
+                    status = `${pair.p3d ? 'A✓' : 'A?'} ${pair.p3dB ? 'B✓' : 'B?'}`;
+                }
                 item.innerHTML = `
-                    <span>#${index+1}: ${pair.p2d ? '2D ✓' : '2D ?'} ${pair.p3d ? '3D ✓' : '3D ?'}</span>
+                    <span>#${index+1}: ${status}</span>
                     <button onclick="removePair('${pair.id}')">X</button>
                 `;
                 pointList.appendChild(item);
             });
 
             if (btnRunAlign) {
-                btnRunAlign.disabled = alignmentPoints.filter(p => p.p2d && p.p3d).length < 3;
+                if (alignmentMode === '2D-3D') {
+                    btnRunAlign.disabled = alignmentPoints.filter(p => p.p2d && p.p3d).length < 3;
+                } else {
+                    btnRunAlign.disabled = alignmentPoints.filter(p => p.p3d && p.p3dB).length < 3;
+                }
             }
             updateMarkers();
         }
@@ -1808,12 +1788,18 @@
 
         function addPair() {
             const id = Math.random().toString(36).substr(2, 9);
-            alignmentPoints.push({ id, p2d: null, p3d: null, color: null });
+            if (alignmentMode === '2D-3D') {
+                alignmentPoints.push({ id, p2d: null, p3d: null, color: null });
+                currentPickingState = '2D';
+                updateStatus('Click on image (2D point)');
+            } else {
+                alignmentPoints.push({ id, p3d: null, p3dB: null });
+                currentPickingState = '3D-A';
+                updateStatus('Click on Splat A');
+            }
             currentPairId = id;
-            currentPickingState = '2D';
             const btnAddPair = document.getElementById('btnAddPair');
             if (btnAddPair) btnAddPair.classList.add('active');
-            updateStatus('Click on image (2D point)');
             updatePointListUI();
         }
 
@@ -1847,10 +1833,13 @@
         }
 
         async function runAlignment() {
-            const validPairs = alignmentPoints.filter(p => p.p2d && p.p3d);
-            if (validPairs.length < 3) {
-                updateStatus('Need at least 3 points');
-                return;
+            let validPairs;
+            if (alignmentMode === '2D-3D') {
+                validPairs = alignmentPoints.filter(p => p.p2d && p.p3d);
+                if (validPairs.length < 3) { updateStatus('Need at least 3 points'); return; }
+            } else {
+                validPairs = alignmentPoints.filter(p => p.p3d && p.p3dB);
+                if (validPairs.length < 3) { updateStatus('Need at least 3 points'); return; }
             }
 
             const btnRunAlign = document.getElementById('btnRunAlign');
@@ -1858,55 +1847,38 @@
             updateStatus('Optimizing...');
 
             const optFocal = document.getElementById('optFocal').checked;
-
-            // Initial parameters from controls
             let params = {
-                tx: controls.targetTarget.x,
-                ty: controls.targetTarget.y,
-                tz: controls.targetTarget.z,
-                alpha: controls.targetAlpha,
-                beta: controls.targetBeta,
-                radius: controls.targetRadius,
-                roll: controls.targetRoll,
-                focal: parseFloat(focalScaleInput.value) || 1.0
+                tx: controls.targetTarget.x, ty: controls.targetTarget.y, tz: controls.targetTarget.z,
+                alpha: controls.targetAlpha, beta: controls.targetBeta, radius: controls.targetRadius,
+                roll: controls.targetRoll, focal: parseFloat(focalScaleInput.value) || 1.0
             };
 
             const lr = 0.01;
             const iterations = 1000;
+            const eps = 1e-6;
 
-            // Numerical gradient descent
             for (let iter = 0; iter < iterations; iter++) {
+                let currentLoss = alignmentMode === '2D-3D' ? computeLoss(params, validPairs) : computeLoss3D(params, validPairs);
                 let gradients = { tx: 0, ty: 0, tz: 0, alpha: 0, beta: 0, radius: 0, roll: 0, focal: 0 };
-                let currentLoss = computeLoss(params, validPairs);
 
-                const eps = 1e-6;
                 for (let key in params) {
-                    if (key === 'focal' && !optFocal) continue;
-
+                    if (key === 'focal' && (!optFocal || alignmentMode === '3D-3D')) continue;
                     const originalVal = params[key];
                     params[key] += eps;
-                    const lossPlus = computeLoss(params, validPairs);
+                    const lossPlus = alignmentMode === '2D-3D' ? computeLoss(params, validPairs) : computeLoss3D(params, validPairs);
                     params[key] = originalVal;
-
                     gradients[key] = (lossPlus - currentLoss) / eps;
                 }
 
-                // Update parameters
                 for (let key in params) {
-                    if (key === 'focal' && !optFocal) continue;
-
                     let step = gradients[key] * lr;
-
-                    // Simple heuristics for different parameter scales
                     if (key === 'tx' || key === 'ty' || key === 'tz') step *= 20;
                     if (key === 'radius') step *= params.radius;
                     if (key === 'focal') step *= 0.1;
-
                     params[key] -= step;
                 }
 
                 if (iter % 100 === 0) {
-                    console.log(`Iteration ${iter}, Loss: ${currentLoss.toFixed(6)}`);
                     applyParamsToCamera(params);
                     await new Promise(r => setTimeout(r, 0));
                 }
@@ -1915,6 +1887,41 @@
             applyParamsToCamera(params);
             btnRunAlign.disabled = false;
             updateStatus('Alignment complete');
+        }
+
+        function computeLoss3D(p, pairs) {
+            let totalError = 0;
+            const camState = computeCameraState(p);
+            // In 3D-3D mode, Splat B is viewed from the current camera.
+            // Actually, if we want to align Splat B to Splat A, and Splat A is in world space.
+            // We are finding the pose of Splat B relative to World.
+            // The camera parameters (tx, ty, tz, alpha, beta, radius, roll) define the WORLD-to-CAMERA transform.
+            // If we assume Splat B is in its CAMERA coordinate system, then camState transforms it to World.
+
+            const worldToCam = controls.getMatrix(); // This is already in world space
+            // Wait, PreciseOrbitControls' matrix is Camera-to-World or World-to-Camera?
+            // In Three.js/gsplat.js, camera.matrixWorld is Camera-to-World.
+
+            // Let's use the same logic as projectNDC but without projection.
+            // We want to transform p3dB (camera space) to World space and compare with p3d (world space).
+
+            const camPos = camState.position;
+            const camRot = camState.rotation;
+
+            pairs.forEach(pair => {
+                // p3dB is the point in Splat B (camera space)
+                // p3d is the point in Splat A (world space)
+
+                // Camera-to-World: P_world = R * P_cam + T
+                const pWorldB = camRot.apply(new SPLAT.Vector3(pair.p3dB.x, pair.p3dB.y, pair.p3dB.z)).add(camPos);
+
+                const dx = pWorldB.x - pair.p3d.x;
+                const dy = pWorldB.y - pair.p3d.y;
+                const dz = pWorldB.z - pair.p3d.z;
+                totalError += dx*dx + dy*dy + dz*dz;
+            });
+
+            return totalError / pairs.length;
         }
 
         function computeLoss(p, pairs) {
@@ -2061,8 +2068,105 @@
             }
         }
 
+        async function runAutoMatch3D() {
+            if (!splatA || !splatB || !splatA.data || !splatB.data) {
+                updateStatus('Need two splats loaded');
+                return;
+            }
+
+            const btnAutoMatch3D = document.getElementById('btnAutoMatch3D');
+            if (btnAutoMatch3D) btnAutoMatch3D.disabled = true;
+            updateStatus('Auto-matching (ICP)...');
+
+            const posA = splatA.data.positions;
+            const posB = splatB.data.positions;
+            const countA = posA.length / 3;
+            const countB = posB.length / 3;
+
+            const sampleSizeB = 2000;
+            const samplesB = [];
+            for (let i = 0; i < sampleSizeB; i++) {
+                const idx = Math.floor(Math.random() * countB);
+                samplesB.push({ x: posB[idx*3], y: posB[idx*3+1], z: posB[idx*3+2] });
+            }
+
+            const sampleSizeA = 5000;
+            const samplesA = [];
+            for (let i = 0; i < sampleSizeA; i++) {
+                const idx = Math.floor(Math.random() * countA);
+                samplesA.push({ x: posA[idx*3], y: posA[idx*3+1], z: posA[idx*3+2] });
+            }
+
+            let params = {
+                tx: controls.targetTarget.x, ty: controls.targetTarget.y, tz: controls.targetTarget.z,
+                alpha: controls.targetAlpha, beta: controls.targetBeta, radius: controls.targetRadius,
+                roll: controls.targetRoll
+            };
+
+            const iterations = 50;
+            const optIterations = 40;
+            const lr = 0.01;
+            const eps = 1e-6;
+
+            for (let iter = 0; iter < iterations; iter++) {
+                const camState = computeCameraState(params);
+                const camPos = camState.position;
+                const camRot = camState.rotation;
+
+                const pairs = [];
+                for (const pB of samplesB) {
+                    const pwB = camRot.apply(new SPLAT.Vector3(pB.x, pB.y, pB.z)).add(camPos);
+                    let minDistSq = Infinity;
+                    let bestA = null;
+                    for (const pA of samplesA) {
+                        const dx = pwB.x - pA.x;
+                        const dy = pwB.y - pA.y;
+                        const dz = pwB.z - pA.z;
+                        const dSq = dx*dx + dy*dy + dz*dz;
+                        if (dSq < minDistSq) {
+                            minDistSq = dSq;
+                            bestA = pA;
+                        }
+                    }
+                    if (bestA && minDistSq < 1.0) {
+                        pairs.push({ p3d: bestA, p3dB: pB });
+                    }
+                }
+
+                if (pairs.length < 10) break;
+
+                for (let opt = 0; opt < optIterations; opt++) {
+                    let currentLoss = computeLoss3D(params, pairs);
+                    let gradients = { tx: 0, ty: 0, tz: 0, alpha: 0, beta: 0, radius: 0, roll: 0 };
+                    for (let key in gradients) {
+                        const originalVal = params[key];
+                        params[key] += eps;
+                        const lossPlus = computeLoss3D(params, pairs);
+                        params[key] = originalVal;
+                        gradients[key] = (lossPlus - currentLoss) / eps;
+                    }
+                    for (let key in gradients) {
+                        let step = gradients[key] * lr;
+                        if (key === 'tx' || key === 'ty' || key === 'tz') step *= 10;
+                        if (key === 'radius') step *= params.radius * 0.5;
+                        params[key] -= step;
+                    }
+                }
+
+                if (iter % 5 === 0) {
+                    applyParamsToCamera(params);
+                    updateStatus(`Auto-matching... ${Math.round(iter/iterations*100)}%`);
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            applyParamsToCamera(params);
+            if (btnAutoMatch3D) btnAutoMatch3D.disabled = false;
+            updateStatus('Auto-match complete');
+        }
+
         async function runAutoRefine() {
-            if (!overlayPixelData || !currentSplat || !currentSplat.data || !currentSplat.data.positions) {
+            if (!overlayPixelData || !splatA || !splatA.data || !splatA.data.positions) {
                 updateStatus('Need reference image and splat');
                 extractOverlayPixelData();
                 if (!overlayPixelData) return;
@@ -2072,8 +2176,8 @@
             if (btnAutoRefine) btnAutoRefine.disabled = true;
             updateStatus('Auto-aligning...');
 
-            const positions = currentSplat.data.positions;
-            const colors = currentSplat.data.colors;
+            const positions = splatA.data.positions;
+            const colors = splatA.data.colors;
             const count = positions.length / 3;
 
             // Sample random points
@@ -2197,57 +2301,112 @@
         const btnClearPoints = document.getElementById('btnClearPoints');
         const btnRunAlign = document.getElementById('btnRunAlign');
         const btnAutoRefine = document.getElementById('btnAutoRefine');
+        const btnAutoMatch3D = document.getElementById('btnAutoMatch3D');
 
         if (btnAddPair) btnAddPair.addEventListener('click', addPair);
         if (btnSuggestPoints) btnSuggestPoints.addEventListener('click', suggestPoints);
         if (btnClearPoints) btnClearPoints.addEventListener('click', clearPoints);
         if (btnRunAlign) btnRunAlign.addEventListener('click', runAlignment);
         if (btnAutoRefine) btnAutoRefine.addEventListener('click', runAutoRefine);
+        if (btnAutoMatch3D) btnAutoMatch3D.addEventListener('click', runAutoMatch3D);
 
         canvas.addEventListener('click', (e) => {
             if (!currentPickingState) return;
+
+            const pair = alignmentPoints.find(p => p.id === currentPairId);
+            if (!pair) return;
 
             if (currentPickingState === '2D') {
                 const rect = canvas.getBoundingClientRect();
                 const x = (e.clientX - rect.left) / rect.width;
                 const y = (e.clientY - rect.top) / rect.height;
+                pair.p2d = { x, y };
 
-                const pair = alignmentPoints.find(p => p.id === currentPairId);
-                if (pair) {
-                    pair.p2d = { x, y };
-
-                    // Capture color from overlay if available
-                    if (overlayPixelData && overlayWidth > 0 && overlayHeight > 0) {
-                        const px = Math.floor(x * overlayWidth);
-                        const py = Math.floor(y * overlayHeight);
-                        const idx = (py * overlayWidth + px) * 4;
-                        pair.color = {
-                            r: overlayPixelData[idx],
-                            g: overlayPixelData[idx+1],
-                            b: overlayPixelData[idx+2]
-                        };
-                        console.log(`[GaussianViewer] Captured color for point:`, pair.color);
-                    }
-
-                    currentPickingState = '3D';
-                    updateStatus('Click on splat (3D point)');
-                    updatePointListUI();
+                if (overlayPixelData && overlayWidth > 0 && overlayHeight > 0) {
+                    const px = Math.floor(x * overlayWidth);
+                    const py = Math.floor(y * overlayHeight);
+                    const idx = (py * overlayWidth + px) * 4;
+                    pair.color = { r: overlayPixelData[idx], g: overlayPixelData[idx+1], b: overlayPixelData[idx+2] };
                 }
-            } else if (currentPickingState === '3D') {
-                const pair = alignmentPoints.find(p => p.id === currentPairId);
-                const targetColor = pair ? pair.color : null;
-                const p3d = pick3DPoint(e.clientX, e.clientY, targetColor);
+
+                currentPickingState = '3D';
+                updateStatus('Click on Splat A');
+                updatePointListUI();
+            } else if (currentPickingState === '3D' || currentPickingState === '3D-A') {
+                const p3d = pick3DPoint(e.clientX, e.clientY, pair.color, 'A');
                 if (p3d) {
-                    if (pair) {
-                        pair.p3d = p3d;
+                    pair.p3d = p3d;
+                    if (alignmentMode === '2D-3D') {
                         cancelPicking();
-                        updatePointListUI();
+                    } else {
+                        currentPickingState = '3D-B';
+                        updateStatus('Click on Splat B');
                     }
+                    updatePointListUI();
                 } else {
-                    updateStatus('No point found, try again');
+                    updateStatus('No point found on Splat A, try again');
+                }
+            } else if (currentPickingState === '3D-B') {
+                const p3d = pick3DPoint(e.clientX, e.clientY, null, 'B');
+                if (p3d) {
+                    // Convert picked world point to camera-space of Splat B?
+                    // Actually, if we are doing 3D-3D, we want corresponding points in their LOCAL spaces.
+                    // But Splat B is currently in world space too.
+                    // If the user wants to "match" them, they probably want to move Splat B.
+
+                    // Let's assume Splat B's "native" space is where we picked it.
+                    // But wait, if they are already both in world space, what are we optimizing?
+
+                    // Ah! The user said: "changing the camera parameters of the 2nd image".
+                    // This implies the 2nd cloud (Splat B) is currently defined in the coordinate system of the 2nd camera.
+
+                    // So we should pick p3dB while Splat B is viewed from the IDENTITY camera (at origin).
+                    // But we want to pick it visually.
+
+                    // Strategy:
+                    // 1. Splat B is rendered using the current camera pose.
+                    // 2. We pick a point pWorldB.
+                    // 3. We convert pWorldB back to the camera space of Splat B.
+
+                    const invCamPos = camera.position;
+                    const invCamRot = camera.rotation.inverse();
+                    const pCamB = invCamRot.apply(new SPLAT.Vector3(p3d.x - invCamPos.x, p3d.y - invCamPos.y, p3d.z - invCamPos.z));
+
+                    pair.p3dB = { x: pCamB.x, y: pCamB.y, z: pCamB.z };
+                    cancelPicking();
+                    updatePointListUI();
+                } else {
+                    updateStatus('No point found on Splat B, try again');
                 }
             }
         });
+
+        const btnMode2D = document.getElementById('btnMode2D');
+        const btnMode3D = document.getElementById('btnMode3D');
+        const alignInstructions = document.getElementById('alignInstructions');
+
+        function setAlignMode(mode) {
+            alignmentMode = mode;
+            btnMode2D.classList.toggle('active', mode === '2D-3D');
+            btnMode3D.classList.toggle('active', mode === '3D-3D');
+
+            const btnAutoRefine = document.getElementById('btnAutoRefine');
+            const btnAutoMatch3D = document.getElementById('btnAutoMatch3D');
+
+            if (mode === '2D-3D') {
+                alignInstructions.innerHTML = '1. Click "Add Pair"<br>2. Click point on image (2D)<br>3. Click same point on Splat A (3D)';
+                if (btnAutoRefine) btnAutoRefine.style.display = 'block';
+                if (btnAutoMatch3D) btnAutoMatch3D.style.display = 'none';
+            } else {
+                alignInstructions.innerHTML = '1. Click "Add Pair"<br>2. Click point on Splat A<br>3. Click same point on Splat B';
+                if (btnAutoRefine) btnAutoRefine.style.display = 'none';
+                if (btnAutoMatch3D) btnAutoMatch3D.style.display = 'block';
+            }
+            clearPoints();
+        }
+
+        if (btnMode2D) btnMode2D.addEventListener('click', () => setAlignMode('2D-3D'));
+        if (btnMode3D) btnMode3D.addEventListener('click', () => setAlignMode('3D-3D'));
 
         if (toggleAlignmentBtn && alignmentPanel) {
             toggleAlignmentBtn.addEventListener('click', () => {
@@ -2276,6 +2435,14 @@
             });
         }
 
+        const splatAAlpha = document.getElementById('splatAAlpha');
+        const splatBAlpha = document.getElementById('splatBAlpha');
+        const scaleInputB = document.getElementById('gaussianScaleValueB');
+
+        if (splatAAlpha) splatAAlpha.addEventListener('input', (e) => updateGaussianOpacity(e.target.value, 'A'));
+        if (splatBAlpha) splatBAlpha.addEventListener('input', (e) => updateGaussianOpacity(e.target.value, 'B'));
+        if (scaleInputB) scaleInputB.addEventListener('change', (e) => updateGaussianScale(e.target.value, 'B'));
+
         const overlayAlphaInput = document.getElementById('overlayAlpha');
         const overlayAlphaValue = document.getElementById('overlayAlphaValue');
 
@@ -2299,23 +2466,25 @@
 
         // Listen for messages from parent
         window.addEventListener('message', async (event) => {
-            const { type, data, filename, extrinsics, intrinsics, overlay_image } = event.data;
+            const { type, data, filename, extrinsics, intrinsics, overlay_image, slot } = event.data;
 
             if (type === 'LOAD_MESH_DATA' && data) {
-                console.log('[GaussianViewer] Received LOAD_MESH_DATA, size:', data.byteLength);
-                console.log('[GaussianViewer] Extrinsics:', extrinsics);
-                console.log('[GaussianViewer] Intrinsics:', intrinsics);
+                console.log('[GaussianViewer] Received LOAD_MESH_DATA, size:', data.byteLength, 'slot:', slot);
 
-                const overlayImage = document.getElementById('overlayImage');
-                if (overlay_image && overlayImage) {
-                    overlayImage.src = "/view?filename=" + encodeURIComponent(overlay_image) + "&type=output";
-                    overlayImage.style.display = "block";
-                } else if (overlayImage) {
-                    overlayImage.style.display = "none";
+                const targetSlot = slot || 'A';
+
+                if (targetSlot === 'A') {
+                    const overlayImage = document.getElementById('overlayImage');
+                    if (overlay_image && overlayImage) {
+                        overlayImage.src = "/view?filename=" + encodeURIComponent(overlay_image) + "&type=output";
+                        overlayImage.style.display = "block";
+                    } else if (overlayImage) {
+                        overlayImage.style.display = "none";
+                    }
                 }
 
-                await loadPLYFromData(data, filename || 'gaussian.ply', extrinsics, intrinsics);
-                applyFocalScale(focalScaleInput.value);
+                await loadPLYFromData(data, filename || 'gaussian.ply', extrinsics, intrinsics, targetSlot);
+                if (targetSlot === 'A') applyFocalScale(focalScaleInput.value);
                 scheduleFrameLayoutUpdate();
             } else if (type === 'LOAD_MESH_DATA' && !data) {
                 console.warn('[GaussianViewer] LOAD_MESH_DATA missing data buffer');
