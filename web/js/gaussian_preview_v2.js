@@ -141,6 +141,7 @@ app.registerExtension({
                         const resolution = message.output_resolution || 2048;
                         const aspectRatio = message.output_aspect_ratio || "source";
                         const cameraState = message.camera_state || null;
+                        const isOptimization = message.is_optimization || false;
 
                         iframe.contentWindow.postMessage({
                             type: "OUTPUT_SETTINGS",
@@ -153,7 +154,8 @@ app.registerExtension({
                             request_id: requestId,
                             output_resolution: resolution,
                             output_aspect_ratio: aspectRatio,
-                            camera_state: cameraState
+                            camera_state: cameraState,
+                            is_optimization: isOptimization
                         }, "*");
 
                         console.log("[GeomPack Gaussian v2] Forwarded render request to preview iframe:", requestId);
@@ -304,7 +306,8 @@ app.registerExtension({
                                     ply_file: plyFile,
                                     filename: filename,
                                     overlay_image: overlayImage,
-                                    camera_state: cameraState
+                                    camera_state: cameraState,
+                                    node_id: nodeId
                                 })
                             });
                             const result = await response.json();
@@ -373,6 +376,12 @@ app.registerExtension({
                 // Add listener for real-time alignment updates from backend
                 const onAlignUpdate = (event) => {
                     const data = event.detail;
+
+                    // Respect node_id if provided
+                    if (data.node_id != null && data.node_id !== nodeId) {
+                        return;
+                    }
+
                     if (data.ply_file === this.currentFilename || data.ply_file === this.currentPlyFile) {
                         if (iframe.contentWindow && data.camera_state) {
                             iframe.contentWindow.postMessage({

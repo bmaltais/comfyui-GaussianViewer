@@ -92,7 +92,7 @@ class RenderGaussianNode:
         print(f"[RenderGaussian] IS_CHANGED: camera_version={camera_version}, camera_state={'yes' if camera_state else 'no'}")
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
-    def render_gaussian(self, ply_path: str, extrinsics=None, intrinsics=None, forced_camera_state=None, override_resolution=None):
+    def render_gaussian(self, ply_path: str, extrinsics=None, intrinsics=None, forced_camera_state=None, override_resolution=None, is_optimization=False, node_id=None):
         """
         Execute rendering and return image tensor.
         """
@@ -172,6 +172,7 @@ class RenderGaussianNode:
             "filename": [filename],
             "output_resolution": [output_resolution],
             "output_aspect_ratio": ["source"],
+            "is_optimization": [is_optimization],
         }
 
         if extrinsics is not None:
@@ -188,7 +189,7 @@ class RenderGaussianNode:
 
         # Send render request to frontend immediately (do not wait for onExecuted)
         send_start = time.time()
-        self._send_render_request(request_id, ui_data)
+        self._send_render_request(request_id, ui_data, node_id=node_id)
         send_end = time.time()
         print(f"[RenderGaussian] Render request sent in {send_end - send_start:.3f}s")
 
@@ -316,7 +317,7 @@ class RenderGaussianNode:
             return int(round(min_dim * aspect))
         return int(round(min_dim / aspect))
 
-    def _send_render_request(self, request_id: str, ui_data: dict):
+    def _send_render_request(self, request_id: str, ui_data: dict, node_id=None):
         """Send a render request to the frontend via ComfyUI websocket."""
         try:
             from server import PromptServer
@@ -340,7 +341,7 @@ class RenderGaussianNode:
         
         payload = {
             "request_id": request_id,
-            "node_id": node_id,
+            "node_id": node_id if node_id is not None else getattr(self, "id", None),
             "ply_file": ui_data.get("ply_file", [None])[0],
             "filename": ui_data.get("filename", [None])[0],
             "output_resolution": ui_data.get("output_resolution", [None])[0],
@@ -348,6 +349,7 @@ class RenderGaussianNode:
             "extrinsics": ui_data.get("extrinsics", [None])[0],
             "intrinsics": ui_data.get("intrinsics", [None])[0],
             "camera_state": ui_data.get("camera_state", [None])[0],
+            "is_optimization": ui_data.get("is_optimization", [False])[0],
         }
 
         print(f"[RenderGaussian] Sending render request with node_id={node_id}, request_id={request_id}")
@@ -526,6 +528,7 @@ try:
         filename = data.get("filename")
         camera_state = data.get("camera_state")
         overlay_filename = data.get("overlay_image")
+        node_id = data.get("node_id")
 
         if not ply_file:
             return web.json_response({"status": "error", "reason": "missing ply_file"}, status=400)
@@ -576,7 +579,8 @@ try:
                 return aligner.gaussian_sift_align(
                     ply_path=full_ply_path,
                     reference_image=ref_tensor,
-                    max_iterations=50 # Reasonable default for UI trigger
+                    max_iterations=50, # Reasonable default for UI trigger
+                    node_id=node_id
                 )
 
             _, _, _, final_state = await asyncio.to_thread(run_alignment)

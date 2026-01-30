@@ -279,25 +279,21 @@ app.registerExtension({
                     const requestId = message.request_id;
                     console.log("[GeomPack Render Gaussian] Request ID:", requestId);
                     
+                    // Respect node_id if provided
+                    if (message.node_id != null && message.node_id !== nodeId) {
+                        return;
+                    }
+
+                    // Skip if optimization is requested, as Render node shouldn't handle it
+                    if (message.is_optimization) {
+                        return;
+                    }
+
                     // Skip if already processed by another node
                     if (processedRequestIds.has(requestId)) {
-                        console.log(`[GeomPack Render Gaussian] WARNING: Request ${requestId} already processed, skipping`);
-                        console.log("[GeomPack Render Gaussian] Processed IDs:", Array.from(processedRequestIds));
                         return;
                     }
                     
-                    // Check node_id matching (more lenient - allow null/undefined)
-                    console.log("[GeomPack Render Gaussian] Node ID check:");
-                    console.log(`  Message node_id: ${message.node_id} (type: ${typeof message.node_id})`);
-                    console.log(`  Current node ID: ${nodeId} (type: ${typeof nodeId})`);
-                    
-                    if (message.node_id != null && message.node_id !== undefined && message.node_id !== nodeId) {
-                        console.log(`[GeomPack Render Gaussian] INFO: Request node_id ${message.node_id} does not match current node ${nodeId}`);
-                        console.log("[GeomPack Render Gaussian] Processing anyway as fallback (lenient mode)");
-                    } else {
-                        console.log(`[GeomPack Render Gaussian] INFO: Request node_id matches current node ${nodeId}`);
-                    }
-
                     const plyFile = message.ply_file;
                     const filename = message.filename || plyFile;
                     const resolution = message.output_resolution || 2048;

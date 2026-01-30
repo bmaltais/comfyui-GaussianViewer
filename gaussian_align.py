@@ -54,7 +54,7 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
     CATEGORY = "geompack/alignment"
 
     def gaussian_sift_align(self, ply_path, reference_image, max_iterations,
-                            initial_extrinsics=None, initial_intrinsics=None, learning_rate=1.0):
+                            initial_extrinsics=None, initial_intrinsics=None, learning_rate=1.0, node_id=None):
         print(f"[GaussianSIFTAlign] Starting alignment with {max_iterations} iterations")
 
         # 1. Prepare reference image
@@ -121,7 +121,9 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
                 rendered_tuple = super(GaussianSIFTAlignNode, self).render_gaussian(
                     ply_path,
                     forced_camera_state=full_state,
-                    override_resolution=512
+                    override_resolution=512,
+                    is_optimization=True,
+                    node_id=node_id
                 )
                 rendered_img = rendered_tuple[0]
 
@@ -148,7 +150,8 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
                 # PromptServer.instance.send works for all connected clients
                 PromptServer.instance.send("geompack_sift_align_update", {
                     "ply_file": filename,
-                    "camera_state": full_state
+                    "camera_state": full_state,
+                    "node_id": node_id
                 })
 
         # Run optimization using Nelder-Mead (no gradients needed)
@@ -178,7 +181,8 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
         # Final render at full resolution
         final_rendered_tuple = super(GaussianSIFTAlignNode, self).render_gaussian(
             ply_path,
-            forced_camera_state=full_final_state
+            forced_camera_state=full_final_state,
+            node_id=node_id
         )
 
         return (final_rendered_tuple[0], final_extrinsics, final_intrinsics, full_final_state)
