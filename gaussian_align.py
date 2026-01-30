@@ -106,8 +106,8 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
 
         def objective(p):
             # Check for stop flag
-            from .render_gaussian import STOP_SIFT_ALIGNMENT
-            if STOP_SIFT_ALIGNMENT:
+            from . import render_gaussian
+            if render_gaussian.STOP_SIFT_ALIGNMENT:
                 raise StopIteration
 
             # Convert p to camera state
@@ -120,12 +120,13 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
             try:
                 rendered_tuple = super(GaussianSIFTAlignNode, self).render_gaussian(
                     ply_path,
-                    forced_camera_state=full_state
+                    forced_camera_state=full_state,
+                    override_resolution=512
                 )
                 rendered_img = rendered_tuple[0]
 
                 loss = self._compute_sift_loss(rendered_img, ref_kp, ref_des, sift)
-                print(f"[GaussianSIFTAlign] Loss: {loss:.4f} (p: {[f'{x:.3f}' for x in p]})")
+                print(f"[GaussianSIFTAlign] Pass loss: {loss:.4f}")
                 return loss
             except Exception as e:
                 print(f"[GaussianSIFTAlign] Iteration error: {e}")
@@ -133,8 +134,8 @@ class GaussianSIFTAlignNode(RenderGaussianNode):
 
         def on_iteration(xk):
             # Check for stop flag
-            from .render_gaussian import STOP_SIFT_ALIGNMENT
-            if STOP_SIFT_ALIGNMENT:
+            from . import render_gaussian
+            if render_gaussian.STOP_SIFT_ALIGNMENT:
                 raise StopIteration
 
             # Send current state to frontend for visual update

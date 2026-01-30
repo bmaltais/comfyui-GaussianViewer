@@ -92,7 +92,7 @@ class RenderGaussianNode:
         print(f"[RenderGaussian] IS_CHANGED: camera_version={camera_version}, camera_state={'yes' if camera_state else 'no'}")
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
-    def render_gaussian(self, ply_path: str, extrinsics=None, intrinsics=None, forced_camera_state=None):
+    def render_gaussian(self, ply_path: str, extrinsics=None, intrinsics=None, forced_camera_state=None, override_resolution=None):
         """
         Execute rendering and return image tensor.
         """
@@ -155,7 +155,10 @@ class RenderGaussianNode:
 
         # Calculate aspect ratio and resolution
         aspect = self._get_aspect_ratio(intrinsics, camera_state)
-        output_resolution = self._compute_output_resolution(aspect)
+        if override_resolution:
+            output_resolution = override_resolution
+        else:
+            output_resolution = self._compute_output_resolution(aspect)
         print(f"[RenderGaussian] Rendering parameters:")
         print(f"  Aspect ratio: {aspect:.4f}")
         print(f"  Output resolution: {output_resolution}")
@@ -546,6 +549,7 @@ try:
             return web.json_response({"status": "error", "reason": f"Reference image not found at {overlay_path}"}, status=400)
 
         try:
+            import asyncio
             from .gaussian_align import GaussianSIFTAlignNode
             aligner = GaussianSIFTAlignNode()
 
@@ -559,10 +563,8 @@ try:
             if not os.path.isabs(full_ply_path) and COMFYUI_OUTPUT_FOLDER:
                 full_ply_path = os.path.join(COMFYUI_OUTPUT_FOLDER, ply_file)
 
-            # Run alignment
-            # Note: gaussian_sift_align is a synchronous method that waits for renders
-            # Since we are in an async handler, this might block the loop, but it's acceptable for this task
-            # unless it takes too long.
+            # Run alignment in a separate thread to avoid blocking the async loop
+            # This allows Stop requests and WebSocket messages to be processed.
 
             # Temporarily set camera state in cache so gaussian_sift_align can find it
             # if we didn't get one from cache initially.
@@ -570,11 +572,14 @@ try:
                 if key:
                     set_camera_state(key, camera_state)
 
-            _, _, _, final_state = aligner.gaussian_sift_align(
-                ply_path=full_ply_path,
-                reference_image=ref_tensor,
-                max_iterations=50 # Reasonable default for UI trigger
-            )
+            def run_alignment():
+                return aligner.gaussian_sift_align(
+                    ply_path=full_ply_path,
+                    reference_image=ref_tensor,
+                    max_iterations=50 # Reasonable default for UI trigger
+                )
+
+            _, _, _, final_state = await asyncio.to_thread(run_alignment)
 
             print("[RenderGaussian] SIFT alignment complete")
             return web.json_response({"status": "ok", "camera_state": final_state})
