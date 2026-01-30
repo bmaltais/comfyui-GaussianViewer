@@ -237,6 +237,8 @@
             <input type="number" id="focalScaleValue" min="0.2" max="3.0" step="0.01" value="1.0" title="Focal length scale value">
         </div>
         <button id="toggleHelp" title="Show keyboard shortcuts">?</button>
+        <button id="autoRefine" title="Auto-align camera to reference image">Auto-Refine</button>
+        <span id="refineStatus" style="color: #6cc; font-size: 10px; margin-left: 8px;"></span>
         <button id="setCamera" title="Save current camera for render">Set Camera</button>
     </div>
 
@@ -1235,6 +1237,196 @@
             scheduleFrameLayoutUpdate();
         }
 
+        // --- Photometric Alignment (Auto-Refine) ---
+        let sampledGaussians = null;
+        let referenceImageData = null;
+
+        function extractOverlayPixels() {
+            const overlayImage = document.getElementById('overlayImage');
+            if (!overlayImage || overlayImage.style.display === 'none' || !overlayImage.complete) {
+                console.warn('[AutoRefine] Overlay image not ready');
+                return null;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = renderer.canvas.width;
+            canvas.height = renderer.canvas.height;
+            const ctx = canvas.getContext('2d');
+
+            // Draw overlay image to canvas matching renderer dimensions
+            ctx.drawImage(overlayImage, 0, 0, canvas.width, canvas.height);
+            return ctx.getImageData(0, 0, canvas.width, canvas.height);
+        }
+
+        function sampleGaussians(count = 10000) {
+            if (!currentSplat || !currentSplat.data || !currentSplat.data.positions) return null;
+
+            const positions = currentSplat.data.positions;
+            const colors = currentSplat.data.colors;
+            const numPoints = positions.length / 3;
+            const stride = Math.max(1, Math.floor(numPoints / count));
+
+            const sampled = [];
+            for (let i = 0; i < numPoints; i += stride) {
+                sampled.push({
+                    pos: new SPLAT.Vector3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]),
+                    color: {
+                        r: colors[i * 4],
+                        g: colors[i * 4 + 1],
+                        b: colors[i * 4 + 2],
+                        a: colors[i * 4 + 3]
+                    }
+                });
+                if (sampled.length >= count) break;
+            }
+            console.log(`[AutoRefine] Sampled ${sampled.length} Gaussians`);
+            return sampled;
+        }
+
+        function projectToScreen(pos, camera, width, height) {
+            const vp = camera.data.viewProj;
+            const x = pos.x * vp[0] + pos.y * vp[4] + pos.z * vp[8] + vp[12];
+            const y = pos.x * vp[1] + pos.y * vp[5] + pos.z * vp[9] + vp[13];
+            const z = pos.x * vp[2] + pos.y * vp[6] + pos.z * vp[10] + vp[14];
+            const w = pos.x * vp[3] + pos.y * vp[7] + pos.z * vp[11] + vp[15];
+
+            if (w <= 0) return null;
+
+            const ndcX = x / w;
+            const ndcY = y / w;
+
+            // gsplat's internal Y-down NDC coordinate system
+            return {
+                x: (ndcX + 1) * width / 2,
+                y: (ndcY + 1) * height / 2
+            };
+        }
+
+        async function autoRefine() {
+            const statusEl = document.getElementById('refineStatus');
+            const overlayImage = document.getElementById('overlayImage');
+
+            if (!overlayImage || overlayImage.style.display === 'none') {
+                statusEl.textContent = 'Error: No overlay image';
+                return;
+            }
+
+            const pixels = extractOverlayPixels();
+            if (!pixels) {
+                statusEl.textContent = 'Error: Failed to get pixels';
+                return;
+            }
+
+            const sampled = sampleGaussians(10000);
+            if (!sampled) {
+                statusEl.textContent = 'Error: No splat loaded';
+                return;
+            }
+
+            statusEl.textContent = 'Refining... 0%';
+
+            // Optimize 6DOF camera pose: position (x,y,z) and rotation (pitch, yaw, roll)
+            // Extract current orientation from controls for better starting point
+            const currentPitch = -controls.currentBeta;
+            const currentYaw = -controls.currentAlpha;
+            const currentRoll = controls.currentRoll;
+
+            let params = {
+                x: camera.position.x,
+                y: camera.position.y,
+                z: camera.position.z,
+                pitch: currentPitch,
+                yaw: currentYaw,
+                roll: currentRoll
+            };
+
+            const iterations = 400;
+            const learningRate = 0.002;
+            const eps = 0.0001;
+            const width = renderer.canvas.width;
+            const height = renderer.canvas.height;
+
+            const updateCameraFromParams = (p) => {
+                camera.position.x = p.x;
+                camera.position.y = p.y;
+                camera.position.z = p.z;
+                camera.rotation = SPLAT.Quaternion.FromEuler(new SPLAT.Vector3(p.pitch, p.yaw, p.roll));
+                camera.update();
+            };
+
+            for (let i = 0; i < iterations; i++) {
+                const grads = { x: 0, y: 0, z: 0, pitch: 0, yaw: 0, roll: 0 };
+
+                updateCameraFromParams(params);
+                const baseLoss = computePhotometricLoss(camera, sampled, pixels.data, width, height);
+
+                for (let key in params) {
+                    const original = params[key];
+                    params[key] += eps;
+                    updateCameraFromParams(params);
+                    const newLoss = computePhotometricLoss(camera, sampled, pixels.data, width, height);
+                    grads[key] = (newLoss - baseLoss) / eps;
+                    params[key] = original;
+                }
+
+                for (let key in params) {
+                    params[key] -= grads[key] * learningRate;
+                }
+
+                if (i % 20 === 0) {
+                    statusEl.textContent = `Refining... ${Math.round(i / iterations * 100)}%`;
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            // Final update and sync controls
+            updateCameraFromParams(params);
+
+            // Sync controls to new camera state
+            // This is tricky for OrbitControls because we need to find a new target and radius
+            // We'll set the target to be some distance in front of the camera
+            const rotationMatrix = SPLAT.Matrix3.RotationFromQuaternion(camera.rotation).buffer;
+            const forward = new SPLAT.Vector3(rotationMatrix[2], rotationMatrix[5], rotationMatrix[8]);
+            const newTarget = camera.position.subtract(forward.multiply(controls.currentRadius || 2));
+
+            controls.setCameraTarget(newTarget);
+            controls.targetRoll = params.roll;
+            controls.currentRoll = params.roll;
+            controls.update();
+
+            statusEl.textContent = '✓ Done';
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+            console.log('[AutoRefine] Refinement complete', params);
+        }
+
+        function computePhotometricLoss(camera, sampledPoints, targetPixels, width, height) {
+            camera.update();
+            let totalLoss = 0;
+            let validCount = 0;
+
+            for (const p of sampledPoints) {
+                const screenPos = projectToScreen(p.pos, camera, width, height);
+                if (!screenPos) continue;
+
+                const sx = Math.floor(screenPos.x);
+                const sy = Math.floor(screenPos.y);
+
+                if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
+                    const idx = (sy * width + sx) * 4;
+                    const tr = targetPixels[idx];
+                    const tg = targetPixels[idx + 1];
+                    const tb = targetPixels[idx + 2];
+                    const ta = targetPixels[idx + 3];
+
+                    if (ta < 10) continue;
+
+                    totalLoss += Math.abs(p.color.r - tr) + Math.abs(p.color.g - tg) + Math.abs(p.color.b - tb);
+                    validCount++;
+                }
+            }
+            return validCount > 0 ? totalLoss / validCount : Infinity;
+        }
+
         // Gaussian scale control
         const scaleInput = document.getElementById('gaussianScaleValue');
         let currentScale = 1.0;
@@ -1460,6 +1652,7 @@
         // Event listeners
         document.getElementById('resetCamera').addEventListener('click', resetCamera);
         document.getElementById('setCamera').addEventListener('click', setCameraParams);
+        document.getElementById('autoRefine').addEventListener('click', autoRefine);
 
         const helpPanel = document.getElementById('helpPanel');
         const toggleHelpBtn = document.getElementById('toggleHelp');
