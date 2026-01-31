@@ -142,7 +142,8 @@ app.registerExtension({
                 const node = this;
 
                 // computeSize should return the current node size to allow the widget to fill the node
-                const WIDGET_OFFSET = 100;
+                // WIDGET_OFFSET must be large enough to cover title bar and all input widgets
+                const WIDGET_OFFSET = 200;
                 let lastHeight = 0;
                 widget.computeSize = function(width) {
                     const h = Math.floor(Math.max(100, node.size[1] - WIDGET_OFFSET) / 10) * 10;
