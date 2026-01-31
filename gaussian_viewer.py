@@ -9,6 +9,7 @@ Merges preview and render into a single IMAGE-producing node.
 
 import os
 import uuid
+import json
 import numpy as np
 import torch
 from PIL import Image
@@ -37,6 +38,10 @@ class GaussianViewerNode(RenderGaussianNode):
                 "intrinsics": ("INTRINSICS", {
                     "tooltip": "3x3 camera intrinsics matrix for FOV"
                 }),
+                "camera_state": ("STRING", {
+                    "default": "",
+                    "tooltip": "Optional JSON camera state string"
+                }),
                 "image": ("IMAGE", {
                     "tooltip": "Reference image to show as overlay"
                 }),
@@ -49,7 +54,7 @@ class GaussianViewerNode(RenderGaussianNode):
     FUNCTION = "gaussian_viewer"
     CATEGORY = "geompack/visualization"
 
-    def gaussian_viewer(self, ply_path: str, extrinsics=None, intrinsics=None, image=None):
+    def gaussian_viewer(self, ply_path: str, extrinsics=None, intrinsics=None, camera_state=None, image=None):
         """
         Preview the PLY in the viewer and return the rendered IMAGE output.
         """
@@ -99,6 +104,14 @@ class GaussianViewerNode(RenderGaussianNode):
             ui_data["intrinsics"] = [intrinsics]
             print(f"[GaussianViewer] Intrinsics provided: {len(intrinsics)}x{len(intrinsics[0])}")
 
+        if camera_state and isinstance(camera_state, str) and camera_state.strip():
+            try:
+                parsed_state = json.loads(camera_state)
+                ui_data["camera_state"] = [parsed_state]
+                print(f"[GaussianViewer] Camera state provided via input string")
+            except Exception as e:
+                print(f"[GaussianViewer] Error parsing camera_state JSON: {e}")
+
         if image is not None:
             print(f"[GaussianViewer] Reference image provided: {image.shape}")
             try:
@@ -120,7 +133,7 @@ class GaussianViewerNode(RenderGaussianNode):
         print("[GaussianViewer] ===== VIEWER PREVIEW READY =====")
         print("=" * 80)
 
-        image_tuple = super().render_gaussian(ply_path, extrinsics, intrinsics)
+        image_tuple = super().render_gaussian(ply_path, extrinsics, intrinsics, camera_state)
         return {"ui": ui_data, "result": image_tuple}
 
 

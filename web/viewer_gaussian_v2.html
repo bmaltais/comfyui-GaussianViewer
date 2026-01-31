@@ -1173,6 +1173,43 @@
                 controls.setCameraTarget(target);
             }
 
+            // Handle pitch, yaw, roll from camera_state
+            if (cameraState.pitch !== undefined && cameraState.yaw !== undefined) {
+                const pitch = cameraState.pitch;
+                const yaw = cameraState.yaw;
+                const roll = cameraState.roll ?? 0;
+
+                // Orientation in radians: alpha = -yaw, beta = -pitch
+                const alpha = -yaw * Math.PI / 180;
+                const beta = -pitch * Math.PI / 180;
+
+                if (!target) {
+                    // Calculate target from position and orientation
+                    const radius = 2.0;
+                    const x = camera.position.x;
+                    const y = camera.position.y;
+                    const z = camera.position.z;
+
+                    const tx = x - radius * Math.sin(alpha) * Math.cos(beta);
+                    const ty = y + radius * Math.sin(beta);
+                    const tz = z + radius * Math.cos(alpha) * Math.cos(beta);
+
+                    const newTarget = new SPLAT.Vector3(tx, ty, tz);
+                    controls.setCameraTarget(newTarget);
+                } else {
+                    // Update alpha/beta to match provided orientation exactly
+                    controls.targetAlpha = alpha;
+                    controls.targetBeta = beta;
+                    controls.currentAlpha = alpha;
+                    controls.currentBeta = beta;
+                }
+
+                if (controls.targetRoll !== undefined) {
+                    controls.targetRoll = roll * Math.PI / 180;
+                    controls.currentRoll = controls.targetRoll;
+                }
+            }
+
             if (scale) {
                 updateGaussianScale(scale);
             }

@@ -63,6 +63,10 @@ class RenderGaussianNode:
                 "intrinsics": ("INTRINSICS", {
                     "tooltip": "3x3 camera intrinsics matrix (from Preview node or custom)"
                 }),
+                "camera_state": ("STRING", {
+                    "default": "",
+                    "tooltip": "Optional JSON camera state string to override cached or matrix params"
+                }),
             },
         }
 
@@ -72,15 +76,16 @@ class RenderGaussianNode:
     CATEGORY = "geompack/visualization"
 
     @classmethod
-    def IS_CHANGED(cls, ply_path: str, extrinsics=None, intrinsics=None):
+    def IS_CHANGED(cls, ply_path: str, extrinsics=None, intrinsics=None, camera_state=None):
         """
         Force re-execution when camera state changes (cached via Preview node).
         """
-        camera_state = _lookup_camera_state_for_change(ply_path)
+        cached_camera_state = _lookup_camera_state_for_change(ply_path)
         camera_version = get_camera_state_version()
         payload = {
             "ply_path": ply_path,
-            "camera_state": camera_state,
+            "cached_camera_state": cached_camera_state,
+            "input_camera_state": camera_state,
             "camera_version": camera_version,
             "extrinsics": extrinsics,
             "intrinsics": intrinsics,
@@ -89,7 +94,7 @@ class RenderGaussianNode:
         print(f"[RenderGaussian] IS_CHANGED: camera_version={camera_version}, camera_state={'yes' if camera_state else 'no'}")
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
-    def render_gaussian(self, ply_path: str, extrinsics=None, intrinsics=None):
+    def render_gaussian(self, ply_path: str, extrinsics=None, intrinsics=None, camera_state=None):
         """
         Execute rendering and return image tensor.
         """
@@ -104,6 +109,7 @@ class RenderGaussianNode:
         print(f"  ply_path: {ply_path}")
         print(f"  extrinsics: {extrinsics is not None}")
         print(f"  intrinsics: {intrinsics is not None}")
+        print(f"  camera_state present: {bool(camera_state)}")
         
         if not ply_path:
             print("[RenderGaussian] ERROR: No PLY path provided")
@@ -133,10 +139,23 @@ class RenderGaussianNode:
         request_id = self._generate_request_id()
         print(f"[RenderGaussian] Generated request ID: {request_id}")
 
-        # Look up camera state
-        camera_state = self._lookup_camera_state(ply_path, relative_path, filename)
-        print(f"[RenderGaussian] Camera state lookup:")
-        print(f"  Found camera_state: {camera_state is not None}")
+        # Handle camera_state input (priority over cache)
+        input_camera_state = None
+        if isinstance(camera_state, str) and camera_state.strip():
+            try:
+                input_camera_state = json.loads(camera_state)
+                print(f"[RenderGaussian] Parsed camera_state from input string")
+            except Exception as e:
+                print(f"[RenderGaussian] Error parsing input camera_state: {e}")
+
+        # Look up cached camera state if not provided as input
+        if input_camera_state is None:
+            camera_state = self._lookup_camera_state(ply_path, relative_path, filename)
+            print(f"[RenderGaussian] Camera state lookup (cached): {camera_state is not None}")
+        else:
+            camera_state = input_camera_state
+            print(f"[RenderGaussian] Using provided input camera_state")
+
         if camera_state:
             print(f"  Camera state keys: {list(camera_state.keys())}")
             print(f"  Position: {camera_state.get('position')}")
